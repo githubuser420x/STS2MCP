@@ -1412,25 +1412,28 @@ public static partial class McpMod
         var relicPools = new List<RelicPoolModel>();
         var potionPools = new List<PotionPoolModel>();
 
-        // If a run is active, get the current character's pools
-        if (RunManager.Instance.IsInProgress)
+        // Requires an active run to access character pools
+        if (!RunManager.Instance.IsInProgress)
         {
-            var runState = RunManager.Instance.DebugOnlyGetState();
-            if (runState != null)
-            {
-                var player = LocalContext.GetMe(runState);
-                if (player != null)
-                {
-                    cardPools.Add(player.Character.CardPool);
-                    relicPools.Add(player.Character.RelicPool);
-                    potionPools.Add(player.Character.PotionPool);
-                }
-            }
+            return new Dictionary<string, object?> { ["error"] = "No run in progress. Start a run to access the glossary." };
         }
 
-        // Always add shared/colorless pools
-        try { cardPools.Add(new ColorlessCardPool()); } catch { }
-        try { cardPools.Add(new CurseCardPool()); } catch { }
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        if (runState == null)
+        {
+            return new Dictionary<string, object?> { ["error"] = "Could not read run state." };
+        }
+
+        // Get pools from all players in the run
+        foreach (var player in runState.Players)
+        {
+            if (player.Character?.CardPool != null)
+                cardPools.Add(player.Character.CardPool);
+            if (player.Character?.RelicPool != null)
+                relicPools.Add(player.Character.RelicPool);
+            if (player.Character?.PotionPool != null)
+                potionPools.Add(player.Character.PotionPool);
+        }
 
         if (subPath == "cards")
             return BuildGlossaryCards(cardPools);
