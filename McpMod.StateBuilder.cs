@@ -208,8 +208,12 @@ public static partial class McpMod
             ["ascension"] = runState.AscensionLevel
         };
 
-        // Version marker to verify DLL is loaded
-        result["_mod_version"] = "patched-v2";
+        // Always include full player data so external tools have it on every screen
+        var _player = LocalContext.GetMe(runState);
+        if (_player != null)
+        {
+            result["player"] = BuildPlayerState(_player);
+        }
 
         // Always include map data so external tools can display it regardless of current screen
         if (result["state_type"] as string != "map")
