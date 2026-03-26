@@ -829,7 +829,8 @@ public static partial class McpMod
         }
         state["visited"] = visited;
 
-        // Next options — read travelable state from UI nodes
+        // Next options — read travelable state from UI nodes when map is open,
+        // otherwise compute from current position's children in the map graph
         var nextOptions = new List<Dictionary<string, object?>>();
         var mapScreen = NMapScreen.Instance;
         if (mapScreen != null)
@@ -864,6 +865,39 @@ public static partial class McpMod
 
                 nextOptions.Add(option);
                 index++;
+            }
+        }
+        else if (visitedCoords.Count > 0)
+        {
+            // Map screen not open — derive next options from current map point's children
+            var curCoord = visitedCoords[visitedCoords.Count - 1];
+            var curPoint = map.GetPoint(curCoord);
+            if (curPoint != null)
+            {
+                int index = 0;
+                foreach (var child in curPoint.Children.OrderBy(c => c.coord.col))
+                {
+                    var option = new Dictionary<string, object?>
+                    {
+                        ["index"] = index,
+                        ["col"] = child.coord.col,
+                        ["row"] = child.coord.row,
+                        ["type"] = child.PointType.ToString()
+                    };
+
+                    var grandchildren = child.Children
+                        .OrderBy(c => c.coord.col)
+                        .Select(c => new Dictionary<string, object?>
+                        {
+                            ["col"] = c.coord.col, ["row"] = c.coord.row,
+                            ["type"] = c.PointType.ToString()
+                        }).ToList();
+                    if (grandchildren.Count > 0)
+                        option["leads_to"] = grandchildren;
+
+                    nextOptions.Add(option);
+                    index++;
+                }
             }
         }
         state["next_options"] = nextOptions;
