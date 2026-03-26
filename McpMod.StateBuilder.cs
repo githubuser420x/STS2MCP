@@ -208,6 +208,22 @@ public static partial class McpMod
             ["ascension"] = runState.AscensionLevel
         };
 
+        // Version marker to verify DLL is loaded
+        result["_mod_version"] = "patched-v2";
+
+        // Always include map data so external tools can display it regardless of current screen
+        if (result["state_type"] as string != "map")
+        {
+            try
+            {
+                result["map"] = BuildMapState(runState);
+            }
+            catch (System.Exception e)
+            {
+                result["map_error"] = e.Message;
+            }
+        }
+
         return result;
     }
 
