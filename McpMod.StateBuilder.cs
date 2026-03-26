@@ -31,6 +31,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Models.CardPools;
 
 namespace STS2_MCP;
 
@@ -1402,5 +1403,160 @@ public static partial class McpMod
             });
         }
         return powers;
+    }
+
+    private static object BuildGlossary(string subPath)
+    {
+        // Get pools from the current player's character, plus shared/colorless pools
+        var cardPools = new List<CardPoolModel>();
+        var relicPools = new List<RelicPoolModel>();
+        var potionPools = new List<PotionPoolModel>();
+
+        // If a run is active, get the current character's pools
+        if (RunManager.Instance.IsInProgress)
+        {
+            var runState = RunManager.Instance.DebugOnlyGetState();
+            if (runState != null)
+            {
+                var player = LocalContext.GetMe(runState);
+                if (player != null)
+                {
+                    cardPools.Add(player.Character.CardPool);
+                    relicPools.Add(player.Character.RelicPool);
+                    potionPools.Add(player.Character.PotionPool);
+                }
+            }
+        }
+
+        // Always add shared/colorless pools
+        try { cardPools.Add(new ColorlessCardPool()); } catch { }
+        try { cardPools.Add(new CurseCardPool()); } catch { }
+
+        if (subPath == "cards")
+            return BuildGlossaryCards(cardPools);
+        if (subPath == "relics")
+            return BuildGlossaryRelics(relicPools);
+        if (subPath == "potions")
+            return BuildGlossaryPotions(potionPools);
+        if (subPath == "keywords")
+            return BuildGlossaryKeywords(cardPools, relicPools, potionPools);
+
+        // Return all categories
+        return new Dictionary<string, object?>
+        {
+            ["cards"] = BuildGlossaryCards(cardPools),
+            ["relics"] = BuildGlossaryRelics(relicPools),
+            ["potions"] = BuildGlossaryPotions(potionPools),
+            ["keywords"] = BuildGlossaryKeywords(cardPools, relicPools, potionPools)
+        };
+    }
+
+    private static List<Dictionary<string, object?>> BuildGlossaryCards(List<CardPoolModel> pools)
+    {
+        var result = new List<Dictionary<string, object?>>();
+        foreach (var pool in pools)
+        {
+            foreach (var card in pool.AllCards)
+            {
+                string costDisplay;
+                if (card.EnergyCost.CostsX)
+                    costDisplay = "X";
+                else
+                    costDisplay = card.EnergyCost.GetAmountToSpend().ToString();
+
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = card.Id.Entry,
+                    ["name"] = SafeGetText(() => card.Title),
+                    ["type"] = card.Type.ToString(),
+                    ["cost"] = costDisplay,
+                    ["description"] = SafeGetCardDescription(card),
+                    ["rarity"] = card.Rarity.ToString(),
+                    ["pool"] = SafeGetText(() => pool.Title),
+                    ["keywords"] = BuildHoverTips(card.HoverTips)
+                });
+            }
+        }
+        return result;
+    }
+
+    private static List<Dictionary<string, object?>> BuildGlossaryRelics(List<RelicPoolModel> pools)
+    {
+        var result = new List<Dictionary<string, object?>>();
+        foreach (var pool in pools)
+        {
+            foreach (var relic in pool.AllRelics)
+            {
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = relic.Id.Entry,
+                    ["name"] = SafeGetText(() => relic.Title),
+                    ["description"] = SafeGetText(() => relic.DynamicDescription),
+                    ["rarity"] = relic.Rarity.ToString(),
+                    ["pool"] = pool.Id.Category,
+                    ["keywords"] = BuildHoverTips(relic.HoverTipsExcludingRelic)
+                });
+            }
+        }
+        return result;
+    }
+
+    private static List<Dictionary<string, object?>> BuildGlossaryPotions(List<PotionPoolModel> pools)
+    {
+        var result = new List<Dictionary<string, object?>>();
+        foreach (var pool in pools)
+        {
+            foreach (var potion in pool.AllPotions)
+            {
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = potion.Id.Entry,
+                    ["name"] = SafeGetText(() => potion.Title),
+                    ["description"] = SafeGetText(() => potion.DynamicDescription),
+                    ["rarity"] = potion.Rarity.ToString(),
+                    ["pool"] = pool.Id.Category,
+                    ["target_type"] = potion.TargetType.ToString(),
+                    ["usage"] = potion.Usage.ToString(),
+                    ["keywords"] = BuildHoverTips(potion.ExtraHoverTips)
+                });
+            }
+        }
+        return result;
+    }
+
+    private static List<Dictionary<string, object?>> BuildGlossaryKeywords(
+        List<CardPoolModel> cardPools, List<RelicPoolModel> relicPools, List<PotionPoolModel> potionPools)
+    {
+        // Collect unique keywords from all items
+        var keywords = new Dictionary<string, string>();
+
+        foreach (var pool in cardPools)
+            foreach (var card in pool.AllCards)
+                foreach (var tip in card.HoverTips)
+                    if (tip is HoverTip ht && !string.IsNullOrEmpty(ht.Title))
+                        keywords[SafeGetText(() => ht.Title) ?? ""] = SafeGetText(() => ht.Description) ?? "";
+
+        foreach (var pool in relicPools)
+            foreach (var relic in pool.AllRelics)
+                foreach (var tip in relic.HoverTips)
+                    if (tip is HoverTip ht && !string.IsNullOrEmpty(ht.Title))
+                        keywords[SafeGetText(() => ht.Title) ?? ""] = SafeGetText(() => ht.Description) ?? "";
+
+        foreach (var pool in potionPools)
+            foreach (var potion in pool.AllPotions)
+                foreach (var tip in potion.HoverTips)
+                    if (tip is HoverTip ht && !string.IsNullOrEmpty(ht.Title))
+                        keywords[SafeGetText(() => ht.Title) ?? ""] = SafeGetText(() => ht.Description) ?? "";
+
+        var result = new List<Dictionary<string, object?>>();
+        foreach (var kv in keywords.OrderBy(k => k.Key))
+        {
+            result.Add(new Dictionary<string, object?>
+            {
+                ["name"] = kv.Key,
+                ["description"] = kv.Value
+            });
+        }
+        return result;
     }
 }
