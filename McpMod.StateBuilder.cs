@@ -872,13 +872,6 @@ public static partial class McpMod
             // Map screen not open — derive next options from current map point's children
             var curCoord = visitedCoords[visitedCoords.Count - 1];
             var curPoint = map.GetPoint(curCoord);
-            state["_debug_next"] = new Dictionary<string, object?>
-            {
-                ["cur_col"] = curCoord.col,
-                ["cur_row"] = curCoord.row,
-                ["point_found"] = curPoint != null,
-                ["children_count"] = curPoint?.Children?.Count ?? -1
-            };
             if (curPoint != null)
             {
                 int index = 0;
