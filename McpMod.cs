@@ -40,9 +40,20 @@ public static partial class McpMod
             tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ProcessMainThreadQueue));
 
             _listener = new HttpListener();
-            _listener.Prefixes.Add("http://localhost:15526/");
-            _listener.Prefixes.Add("http://127.0.0.1:15526/");
-            _listener.Start();
+            try
+            {
+                // Try binding to all interfaces first (requires URL ACL: netsh http add urlacl url=http://+:15526/ user=Everyone)
+                _listener.Prefixes.Add("http://+:15526/");
+                _listener.Start();
+            }
+            catch
+            {
+                // Fall back to localhost-only if ACL not configured
+                _listener = new HttpListener();
+                _listener.Prefixes.Add("http://localhost:15526/");
+                _listener.Prefixes.Add("http://127.0.0.1:15526/");
+                _listener.Start();
+            }
 
             _serverThread = new Thread(ServerLoop)
             {
