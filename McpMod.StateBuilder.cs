@@ -1892,6 +1892,33 @@ public static partial class McpMod
         }
         result["enemy_stats"] = enemies;
 
+        // Ancient stats
+        var ancients = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.AncientStats)
+        {
+            var anc = new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key.Entry,
+                ["total_visits"] = kv.Value.TotalVisits,
+                ["total_wins"] = kv.Value.TotalWins,
+                ["total_losses"] = kv.Value.TotalLosses
+            };
+            var charStats = new List<Dictionary<string, object?>>();
+            foreach (var cs in kv.Value.CharStats)
+            {
+                charStats.Add(new Dictionary<string, object?>
+                {
+                    ["character"] = cs.Character.Entry,
+                    ["wins"] = cs.Wins,
+                    ["losses"] = cs.Losses
+                });
+            }
+            if (charStats.Count > 0)
+                anc["by_character"] = charStats;
+            ancients.Add(anc);
+        }
+        result["ancient_stats"] = ancients;
+
         // Discovered items
         result["discovered_cards"] = progress.DiscoveredCards.Select(id => id.Entry).ToList();
         result["discovered_relics"] = progress.DiscoveredRelics.Select(id => id.Entry).ToList();
@@ -1899,11 +1926,37 @@ public static partial class McpMod
         result["discovered_events"] = progress.DiscoveredEvents.Select(id => id.Entry).ToList();
         result["discovered_acts"] = progress.DiscoveredActs.Select(id => id.Entry).ToList();
 
-        // Summary
+        // Achievements
+        var achievements = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.UnlockedAchievements)
+        {
+            achievements.Add(new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key,
+                ["unlocked_at"] = kv.Value
+            });
+        }
+        result["achievements"] = achievements;
+
+        // Epochs (progression milestones)
+        result["epochs"] = progress.Epochs.Select(e => new Dictionary<string, object?>
+        {
+            ["id"] = e.Id,
+            ["state"] = e.State.ToString(),
+            ["obtained"] = e.ObtainDate
+        }).ToList();
+
+        // Global stats
         result["total_playtime"] = progress.TotalPlaytime;
         result["total_unlocks"] = progress.TotalUnlocks;
         result["current_score"] = progress.CurrentScore;
         result["floors_climbed"] = progress.FloorsClimbed;
+        result["architect_damage"] = progress.ArchitectDamage;
+        result["total_wins"] = progress.Wins;
+        result["total_losses"] = progress.Losses;
+        result["fastest_victory"] = progress.FastestVictory;
+        result["best_win_streak"] = progress.BestWinStreak;
+        result["number_of_runs"] = progress.NumberOfRuns;
 
         return result;
     }
