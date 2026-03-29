@@ -190,6 +190,13 @@ public static partial class McpMod
                 else
                     SendError(response, 405, "Method not allowed");
             }
+            else if (path == "/api/v1/glossary/potions")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryPotions(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else
             {
                 SendError(response, 404, "Not found");
@@ -310,6 +317,20 @@ public static partial class McpMod
         try
         {
             var dataTask = RunOnMainThread(() => BuildGlossaryCards());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryPotions(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryPotions());
             var data = dataTask.GetAwaiter().GetResult();
             SendJson(response, data);
         }

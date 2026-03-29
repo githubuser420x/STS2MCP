@@ -1524,4 +1524,45 @@ public static partial class McpMod
 
         return result;
     }
+
+    internal static object BuildGlossaryPotions()
+    {
+        if (!RunManager.Instance.IsInProgress)
+            return new Dictionary<string, object?> { ["error"] = "No run in progress." };
+
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        if (runState == null)
+            return new Dictionary<string, object?> { ["error"] = "Could not read run state." };
+
+        var result = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>();
+
+        foreach (var player in runState.Players)
+        {
+            var pool = player.Character?.PotionPool;
+            if (pool == null) continue;
+            var poolName = SafeGetText(() => player.Character.Title) ?? "Unknown";
+
+            foreach (var potion in pool.AllPotions)
+            {
+                var id = potion.Id.Entry;
+                if (seen.Contains(id)) continue;
+                seen.Add(id);
+
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = SafeGetText(() => potion.Title),
+                    ["description"] = SafeGetText(() => potion.DynamicDescription),
+                    ["rarity"] = potion.Rarity.ToString(),
+                    ["target_type"] = potion.TargetType.ToString(),
+                    ["usage"] = potion.Usage.ToString(),
+                    ["pool"] = poolName,
+                    ["keywords"] = BuildHoverTips(potion.ExtraHoverTips)
+                });
+            }
+        }
+
+        return result;
+    }
 }
