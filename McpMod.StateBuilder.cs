@@ -31,6 +31,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Models.RelicPools;
 
 namespace STS2_MCP;
 
@@ -1446,6 +1447,79 @@ public static partial class McpMod
                     ["keywords"] = BuildHoverTips(card.HoverTips)
                 });
             }
+        }
+
+        return result;
+    }
+
+    internal static object BuildGlossaryRelics()
+    {
+        if (!RunManager.Instance.IsInProgress)
+            return new Dictionary<string, object?> { ["error"] = "No run in progress." };
+
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        if (runState == null)
+            return new Dictionary<string, object?> { ["error"] = "Could not read run state." };
+
+        var result = new List<Dictionary<string, object?>>();
+        var seen = new HashSet<string>();
+
+        // Get relics from player's character pool
+        foreach (var player in runState.Players)
+        {
+            var pool = player.Character?.RelicPool;
+            if (pool == null) continue;
+            var poolName = SafeGetText(() => player.Character.Title) ?? "Unknown";
+
+            foreach (var relic in pool.AllRelics)
+            {
+                var id = relic.Id.Entry;
+                if (seen.Contains(id)) continue;
+                seen.Add(id);
+
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = SafeGetText(() => relic.Title),
+                    ["description"] = SafeGetText(() => relic.DynamicDescription),
+                    ["rarity"] = relic.Rarity.ToString(),
+                    ["pool"] = poolName,
+                    ["keywords"] = BuildHoverTips(relic.HoverTipsExcludingRelic)
+                });
+            }
+        }
+
+        // Get shared relics from the grab bag (all relics available in this run)
+        var grabBag = runState.SharedRelicGrabBag;
+        if (grabBag != null && grabBag.IsPopulated)
+        {
+            // The grab bag doesn't expose a list, but we can get relics from the player's owned list
+            // Fall back to enumerating all RelicModel subtypes with CanonicalInstance
+        }
+
+        // Enumerate all concrete RelicModel subtypes for a complete list
+        foreach (var type in typeof(RelicModel).Assembly.GetTypes())
+        {
+            if (type.IsAbstract || !type.IsSubclassOf(typeof(RelicModel))) continue;
+            try
+            {
+                var instance = (RelicModel)System.Activator.CreateInstance(type)!;
+                if (instance.CanonicalInstance is not { } canonical) continue;
+                var id = canonical.Id.Entry;
+                if (seen.Contains(id)) continue;
+                seen.Add(id);
+
+                result.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = SafeGetText(() => canonical.Title),
+                    ["description"] = SafeGetText(() => canonical.DynamicDescription),
+                    ["rarity"] = canonical.Rarity.ToString(),
+                    ["pool"] = canonical.Pool?.Id.Category ?? "Shared",
+                    ["keywords"] = BuildHoverTips(canonical.HoverTipsExcludingRelic)
+                });
+            }
+            catch { }
         }
 
         return result;
