@@ -502,11 +502,58 @@ public static partial class McpMod
                     if (RunManager.Instance.IsInProgress)
                         return new Dictionary<string, object?> { ["error"] = "Cannot switch profiles during a run" };
 
+                    // Use the proper UI flow: find profile screen and click the button
+                    var tree = (Godot.Engine.GetMainLoop()) as Godot.SceneTree;
+                    if (tree?.Root != null)
+                    {
+                        var profileScreen = FindFirst<MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen.NProfileScreen>(tree.Root);
+                        if (profileScreen != null)
+                        {
+                            var buttons = profileScreen.GetType().GetField("_profileButtons",
+                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                ?.GetValue(profileScreen) as System.Collections.IList;
+                            if (buttons != null)
+                            {
+                                foreach (var btn in buttons)
+                                {
+                                    var btnId = btn.GetType().GetField("_profileId",
+                                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                        ?.GetValue(btn);
+                                    if (btnId is int id && id == profileId)
+                                    {
+                                        var switchMethod = btn.GetType().GetMethod("SwitchToThisProfile",
+                                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                        switchMethod?.Invoke(btn, null);
+                                        return new Dictionary<string, object?>
+                                        {
+                                            ["status"] = "ok",
+                                            ["message"] = $"Switching to profile {profileId} (via UI)",
+                                            ["current_profile_id"] = profileId
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback: open profile screen first if not already open
+                        var mainMenu = FindFirst<MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu>(tree.Root);
+                        if (mainMenu != null)
+                        {
+                            mainMenu.OpenProfileScreen();
+                            return new Dictionary<string, object?>
+                            {
+                                ["status"] = "ok",
+                                ["message"] = "Opened profile screen. Send switch again to select profile.",
+                            };
+                        }
+                    }
+
+                    // Last resort: direct switch (requires restart)
                     sm.SwitchProfileId(profileId);
                     return new Dictionary<string, object?>
                     {
                         ["status"] = "ok",
-                        ["message"] = $"Switched to profile {profileId}",
+                        ["message"] = $"Switched to profile {profileId} (requires restart)",
                         ["current_profile_id"] = sm.CurrentProfileId
                     };
                 }

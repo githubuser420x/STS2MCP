@@ -38,6 +38,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.Timeline;
+using MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
 using Godot;
 
@@ -289,6 +290,16 @@ public static partial class McpMod
                             result["message"] = "Settings screen.";
                         }
                         else
+                        {
+                            var profileScreen = FindFirst<MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen.NProfileScreen>(tree.Root);
+                            if (profileScreen != null && profileScreen.Visible)
+                            {
+                                result["menu_screen"] = "profile_select";
+                                result["message"] = "Profile select screen.";
+                                result["current_profile_id"] = SaveManager.Instance?.CurrentProfileId;
+                            }
+                        }
+                        if (!result.ContainsKey("menu_screen"))
                         {
                             result["menu_screen"] = "main";
                             result["message"] = "Main menu.";
