@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
 
 namespace STS2_MCP;
 
@@ -173,6 +175,15 @@ public static partial class McpMod
                     HandleGetMultiplayerState(request, response);
                 else if (request.HttpMethod == "POST")
                     HandlePostMultiplayerAction(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/profiles")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetProfiles(response);
+                else if (request.HttpMethod == "POST")
+                    HandlePostProfiles(request, response);
                 else
                     SendError(response, 405, "Method not allowed");
             }
@@ -341,6 +352,128 @@ public static partial class McpMod
         catch (Exception ex)
         {
             SendError(response, 500, $"Failed to read game state: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetProfiles(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() =>
+            {
+                var sm = SaveManager.Instance;
+                var result = new Dictionary<string, object?>
+                {
+                    ["current_profile_id"] = sm.CurrentProfileId,
+                    ["profiles"] = new List<Dictionary<string, object?>>()
+                };
+
+                // Check which profiles exist by looking for save directories
+                var profiles = (List<Dictionary<string, object?>>)result["profiles"]!;
+                for (int i = 1; i <= 3; i++)
+                {
+                    var profileData = new Dictionary<string, object?>
+                    {
+                        ["id"] = i,
+                        ["is_current"] = i == sm.CurrentProfileId,
+                    };
+
+                    // Check if profile has progress data
+                    try
+                    {
+                        var path = MegaCrit.Sts2.Core.Saves.Managers.ProgressSaveManager.GetProgressPathForProfile(i);
+                        profileData["has_data"] = System.IO.File.Exists(path);
+                        profileData["path"] = path;
+                    }
+                    catch
+                    {
+                        profileData["has_data"] = false;
+                    }
+
+                    profiles.Add(profileData);
+                }
+
+                return result;
+            });
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to get profiles: {ex.Message}");
+        }
+    }
+
+    private static void HandlePostProfiles(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        string body;
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            body = reader.ReadToEnd();
+
+        Dictionary<string, JsonElement>? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+        }
+        catch
+        {
+            SendError(response, 400, "Invalid JSON");
+            return;
+        }
+
+        if (parsed == null || !parsed.TryGetValue("action", out var actionElem))
+        {
+            SendError(response, 400, "Missing 'action' field. Use: switch, delete");
+            return;
+        }
+
+        string action = actionElem.GetString() ?? "";
+        int profileId = parsed.TryGetValue("profile_id", out var idElem) ? idElem.GetInt32() : 0;
+
+        try
+        {
+            var resultTask = RunOnMainThread(() =>
+            {
+                var sm = SaveManager.Instance;
+
+                if (action == "switch")
+                {
+                    if (profileId < 1 || profileId > 3)
+                        return new Dictionary<string, object?> { ["error"] = "profile_id must be 1-3" };
+                    if (RunManager.Instance.IsInProgress)
+                        return new Dictionary<string, object?> { ["error"] = "Cannot switch profiles during a run" };
+
+                    sm.SwitchProfileId(profileId);
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "ok",
+                        ["message"] = $"Switched to profile {profileId}",
+                        ["current_profile_id"] = sm.CurrentProfileId
+                    };
+                }
+                else if (action == "delete")
+                {
+                    if (profileId < 1 || profileId > 3)
+                        return new Dictionary<string, object?> { ["error"] = "profile_id must be 1-3" };
+                    if (profileId == sm.CurrentProfileId)
+                        return new Dictionary<string, object?> { ["error"] = "Cannot delete the active profile" };
+
+                    sm.DeleteProfile(profileId);
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "ok",
+                        ["message"] = $"Deleted profile {profileId}"
+                    };
+                }
+
+                return new Dictionary<string, object?> { ["error"] = $"Unknown action: {action}. Use: switch, delete" };
+            });
+            var result = resultTask.GetAwaiter().GetResult();
+            SendJson(response, result);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Profile action failed: {ex.Message}");
         }
     }
 
