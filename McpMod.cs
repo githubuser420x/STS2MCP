@@ -176,6 +176,13 @@ public static partial class McpMod
                 else
                     SendError(response, 405, "Method not allowed");
             }
+            else if (path == "/api/v1/profile")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetProfile(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else if (path == "/api/v1/glossary/cards")
             {
                 if (request.HttpMethod == "GET")
@@ -316,6 +323,20 @@ public static partial class McpMod
         catch (Exception ex)
         {
             SendError(response, 500, $"Failed to read game state: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetProfile(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildProfile());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build profile: {ex.Message}");
         }
     }
 

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
@@ -1791,6 +1792,92 @@ public static partial class McpMod
                 ["description"] = kv.Value
             });
         }
+
+        return result;
+    }
+
+    internal static object BuildProfile()
+    {
+        var progress = SaveManager.Instance?.Progress;
+        if (progress == null)
+            return new Dictionary<string, object?> { ["error"] = "No profile data available." };
+
+        var result = new Dictionary<string, object?>();
+
+        // Character stats
+        var characters = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.CharacterStats)
+        {
+            var stats = kv.Value;
+            characters.Add(new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key.Entry,
+                ["max_ascension"] = stats.MaxAscension,
+                ["preferred_ascension"] = stats.PreferredAscension,
+                ["total_wins"] = stats.TotalWins,
+                ["total_losses"] = stats.TotalLosses,
+                ["fastest_win_time"] = stats.FastestWinTime,
+                ["best_win_streak"] = stats.BestWinStreak,
+                ["current_win_streak"] = stats.CurrentWinStreak,
+                ["playtime"] = stats.Playtime
+            });
+        }
+        result["characters"] = characters;
+
+        // Card stats (pick/skip/win/loss rates)
+        var cards = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.CardStats)
+        {
+            var stats = kv.Value;
+            cards.Add(new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key.Entry,
+                ["times_picked"] = stats.TimesPicked,
+                ["times_skipped"] = stats.TimesSkipped,
+                ["times_won"] = stats.TimesWon,
+                ["times_lost"] = stats.TimesLost
+            });
+        }
+        result["card_stats"] = cards;
+
+        // Encounter stats
+        var encounters = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.EncounterStats)
+        {
+            encounters.Add(new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key.Entry,
+                ["total_wins"] = kv.Value.TotalWins,
+                ["total_losses"] = kv.Value.TotalLosses
+            });
+        }
+        result["encounter_stats"] = encounters;
+
+        // Enemy stats
+        var enemies = new List<Dictionary<string, object?>>();
+        foreach (var kv in progress.EnemyStats)
+        {
+            enemies.Add(new Dictionary<string, object?>
+            {
+                ["id"] = kv.Key.Entry,
+                ["total_wins"] = kv.Value.TotalWins,
+                ["total_losses"] = kv.Value.TotalLosses
+            });
+        }
+        result["enemy_stats"] = enemies;
+
+        // Discovered items
+        result["discovered_cards"] = progress.DiscoveredCards.Select(id => id.Entry).ToList();
+        result["discovered_relics"] = progress.DiscoveredRelics.Select(id => id.Entry).ToList();
+        result["discovered_potions"] = progress.DiscoveredPotions.Select(id => id.Entry).ToList();
+        result["discovered_events"] = progress.DiscoveredEvents.Select(id => id.Entry).ToList();
+        result["discovered_acts"] = progress.DiscoveredActs.Select(id => id.Entry).ToList();
+
+        // Summary
+        result["total_playtime"] = progress.TotalPlaytime;
+        result["total_unlocks"] = progress.TotalUnlocks;
+        result["current_score"] = progress.CurrentScore;
+        result["floors_climbed"] = progress.FloorsClimbed;
 
         return result;
     }
