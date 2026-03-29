@@ -2023,10 +2023,53 @@ public static partial class McpMod
                 var instance = System.Runtime.Serialization.FormatterServices.GetUninitializedObject(type);
                 var roomType = type.GetProperty("RoomType")?.GetValue(instance);
                 var isWeak = type.GetProperty("IsWeak")?.GetValue(instance);
+                var minGold = type.GetProperty("MinGoldReward")?.GetValue(instance);
+                var maxGold = type.GetProperty("MaxGoldReward")?.GetValue(instance);
                 if (roomType != null) entry["room_type"] = roomType.ToString();
                 if (isWeak != null) entry["is_weak"] = isWeak;
+                if (minGold != null) entry["min_gold"] = minGold;
+                if (maxGold != null) entry["max_gold"] = maxGold;
             }
             catch { }
+
+            // Get possible monsters from AllPossibleMonsters property override
+            try
+            {
+                var allMonstersMethod = type.GetProperty("AllPossibleMonsters");
+                if (allMonstersMethod != null)
+                {
+                    // Read the method body to find monster type references
+                    var monsterTypes = new List<string>();
+                    foreach (var m in type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+                    {
+                        if (m.Name == "GenerateMonsters" && m.DeclaringType == type)
+                        {
+                            // Check constructor parameters or fields for monster references
+                            break;
+                        }
+                    }
+                    // Fall back: check fields that reference MonsterModel types
+                    foreach (var f in type.GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+                    {
+                        if (f.FieldType.IsSubclassOf(typeof(MonsterModel)) || (f.FieldType.IsGenericType && f.FieldType.GetGenericArguments().Any(a => a.IsSubclassOf(typeof(MonsterModel)))))
+                            monsterTypes.Add(f.FieldType.Name);
+                    }
+                    // Also check which monster types the encounter name suggests
+                }
+            }
+            catch { }
+
+            // Infer monsters from encounter name pattern (e.g., NibbitsWeak -> Nibbit)
+            var baseName = type.Name.Replace("Normal", "").Replace("Weak", "").Replace("Elite", "").Replace("Boss", "");
+            var matchingMonsters = new List<string>();
+            foreach (var monsterEntry in monsters)
+            {
+                var mClass = monsterEntry["class"] as string ?? "";
+                if (baseName.Contains(mClass) || mClass.Contains(baseName.TrimEnd('s')))
+                    matchingMonsters.Add(mClass);
+            }
+            if (matchingMonsters.Count > 0)
+                entry["likely_monsters"] = matchingMonsters;
 
             encounters.Add(entry);
         }
