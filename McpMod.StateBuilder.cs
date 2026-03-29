@@ -1565,4 +1565,73 @@ public static partial class McpMod
 
         return result;
     }
+
+    internal static object BuildGlossaryKeywords()
+    {
+        if (!RunManager.Instance.IsInProgress)
+            return new Dictionary<string, object?> { ["error"] = "No run in progress." };
+
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        if (runState == null)
+            return new Dictionary<string, object?> { ["error"] = "Could not read run state." };
+
+        var keywords = new Dictionary<string, string>();
+
+        foreach (var player in runState.Players)
+        {
+            // From cards
+            var cardPool = player.Character?.CardPool;
+            if (cardPool != null)
+            {
+                foreach (var card in cardPool.AllCards)
+                    foreach (var tip in card.HoverTips)
+                        if (tip is HoverTip ht)
+                        {
+                            var title = SafeGetText(() => ht.Title);
+                            if (!string.IsNullOrEmpty(title))
+                                keywords[title!] = SafeGetText(() => ht.Description) ?? "";
+                        }
+            }
+
+            // From relics
+            var relicPool = player.Character?.RelicPool;
+            if (relicPool != null)
+            {
+                foreach (var relic in relicPool.AllRelics)
+                    foreach (var tip in relic.HoverTips)
+                        if (tip is HoverTip ht)
+                        {
+                            var title = SafeGetText(() => ht.Title);
+                            if (!string.IsNullOrEmpty(title))
+                                keywords[title!] = SafeGetText(() => ht.Description) ?? "";
+                        }
+            }
+
+            // From potions
+            var potionPool = player.Character?.PotionPool;
+            if (potionPool != null)
+            {
+                foreach (var potion in potionPool.AllPotions)
+                    foreach (var tip in potion.HoverTips)
+                        if (tip is HoverTip ht)
+                        {
+                            var title = SafeGetText(() => ht.Title);
+                            if (!string.IsNullOrEmpty(title))
+                                keywords[title!] = SafeGetText(() => ht.Description) ?? "";
+                        }
+            }
+        }
+
+        var result = new List<Dictionary<string, object?>>();
+        foreach (var kv in keywords.OrderBy(k => k.Key))
+        {
+            result.Add(new Dictionary<string, object?>
+            {
+                ["name"] = kv.Key,
+                ["description"] = kv.Value
+            });
+        }
+
+        return result;
+    }
 }

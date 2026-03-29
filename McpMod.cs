@@ -197,6 +197,13 @@ public static partial class McpMod
                 else
                     SendError(response, 405, "Method not allowed");
             }
+            else if (path == "/api/v1/glossary/keywords")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryKeywords(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else
             {
                 SendError(response, 404, "Not found");
@@ -317,6 +324,20 @@ public static partial class McpMod
         try
         {
             var dataTask = RunOnMainThread(() => BuildGlossaryCards());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryKeywords(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryKeywords());
             var data = dataTask.GetAwaiter().GetResult();
             SendJson(response, data);
         }
