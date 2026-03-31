@@ -45,12 +45,33 @@ public static partial class McpMod
             sb.AppendLine();
         }
 
+        // Top-level player summary (non-combat singleplayer only; combat renders its own detailed view)
+        bool hasBattle = state.ContainsKey("battle");
+        if (!isMultiplayer && !hasBattle
+            && state.TryGetValue("player", out var topPlayerObj) && topPlayerObj is Dictionary<string, object?> topPlayer)
+        {
+            sb.AppendLine("## Player (You)");
+            string stars = topPlayer.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
+            sb.AppendLine($"**{topPlayer["character"]}** — HP: {topPlayer["hp"]}/{topPlayer["max_hp"]} | Gold: {topPlayer["gold"]}{stars}");
+            sb.AppendLine();
+
+            FormatListSection(sb, "Relics", topPlayer, "relics", r =>
+            {
+                string counter = r.TryGetValue("counter", out var c) && c != null ? $" [{c}]" : "";
+                return $"- **{r["name"]}**{counter}: {r["description"]}";
+            });
+            FormatListSection(sb, "Potions", topPlayer, "potions", p => $"- [{p["slot"]}] **{p["name"]}**: {p["description"]}");
+        }
+
         if (state.TryGetValue("battle", out var battleObj) && battleObj is Dictionary<string, object?> battle)
         {
             if (isMultiplayer)
                 FormatMultiplayerBattleMarkdown(sb, battle);
             else
-                FormatBattleMarkdown(sb, battle);
+            {
+                var battlePlayer = state.TryGetValue("player", out var bp) && bp is Dictionary<string, object?> bpd ? bpd : null;
+                FormatBattleMarkdown(sb, battle, battlePlayer);
+            }
         }
 
         if (state.TryGetValue("event", out var eventObj) && eventObj is Dictionary<string, object?> eventData)
@@ -68,6 +89,11 @@ public static partial class McpMod
         if (state.TryGetValue("shop", out var shopObj) && shopObj is Dictionary<string, object?> shopData)
         {
             FormatShopMarkdown(sb, shopData);
+        }
+
+        if (state.TryGetValue("fake_merchant", out var fmObj) && fmObj is Dictionary<string, object?> fmData)
+        {
+            FormatFakeMerchantMarkdown(sb, fmData);
         }
 
         if (state.TryGetValue("map", out var mapObj) && mapObj is Dictionary<string, object?> mapData)
@@ -97,9 +123,19 @@ public static partial class McpMod
             FormatCardSelectMarkdown(sb, cardSelect);
         }
 
+        if (state.TryGetValue("bundle_select", out var bundleSelectObj) && bundleSelectObj is Dictionary<string, object?> bundleSelect)
+        {
+            FormatBundleSelectMarkdown(sb, bundleSelect);
+        }
+
         if (state.TryGetValue("relic_select", out var relicSelectObj) && relicSelectObj is Dictionary<string, object?> relicSelect)
         {
             FormatRelicSelectMarkdown(sb, relicSelect);
+        }
+
+        if (state.TryGetValue("crystal_sphere", out var crystalSphereObj) && crystalSphereObj is Dictionary<string, object?> crystalSphere)
+        {
+            FormatCrystalSphereMarkdown(sb, crystalSphere);
         }
 
         if (state.TryGetValue("treasure", out var treasureObj) && treasureObj is Dictionary<string, object?> treasureData)
@@ -130,12 +166,12 @@ public static partial class McpMod
         return sb.ToString();
     }
 
-    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle)
+    private static void FormatBattleMarkdown(StringBuilder sb, Dictionary<string, object?> battle, Dictionary<string, object?>? player)
     {
         sb.AppendLine($"**Round {battle["round"]}** | Turn: {battle["turn"]} | Play Phase: {battle["is_play_phase"]}");
         sb.AppendLine();
 
-        if (battle.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        if (player != null)
         {
             sb.AppendLine("## Player (You)");
             string stars = player.TryGetValue("stars", out var s) && s != null ? $" | Stars: {s}" : "";
@@ -252,12 +288,6 @@ public static partial class McpMod
         sb.AppendLine($"## {(isAncient ? "Ancient" : "Event")}: {name}");
         sb.AppendLine();
 
-        if (evt.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
-        {
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
-            sb.AppendLine();
-        }
-
         bool inDialogue = evt.TryGetValue("in_dialogue", out var d) && d is true;
         if (inDialogue)
         {
@@ -290,13 +320,6 @@ public static partial class McpMod
 
     private static void FormatRestSiteMarkdown(StringBuilder sb, Dictionary<string, object?> restSite)
     {
-        if (restSite.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
-        {
-            sb.AppendLine("## Player (You)");
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
-            sb.AppendLine();
-        }
-
         if (restSite.TryGetValue("options", out var optObj) && optObj is List<Dictionary<string, object?>> options && options.Count > 0)
         {
             sb.AppendLine("## Rest Site Options");
@@ -315,10 +338,10 @@ public static partial class McpMod
 
     private static void FormatShopMarkdown(StringBuilder sb, Dictionary<string, object?> shop)
     {
-        if (shop.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        if (shop.TryGetValue("error", out var err) && err != null)
         {
-            sb.AppendLine("## Player (You)");
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
+            sb.AppendLine("## Shop");
+            sb.AppendLine($"**Note:** {err}");
             sb.AppendLine();
         }
 
@@ -360,16 +383,31 @@ public static partial class McpMod
         sb.AppendLine();
     }
 
-    private static void FormatMapMarkdown(StringBuilder sb, Dictionary<string, object?> map)
+    private static void FormatFakeMerchantMarkdown(StringBuilder sb, Dictionary<string, object?> fm)
     {
-        // Player summary
-        if (map.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        string name = fm.TryGetValue("event_name", out var n) && n != null ? n.ToString()! : "Fake Merchant";
+        bool startedFight = fm.TryGetValue("started_fight", out var sf) && sf is true;
+
+        sb.AppendLine($"## Event: {name}");
+        sb.AppendLine();
+
+        if (startedFight)
         {
-            sb.AppendLine("## Player (You)");
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
+            sb.AppendLine("*The fake merchant has been defeated. Use `proceed` to open the map.*");
             sb.AppendLine();
+            return;
         }
 
+        sb.AppendLine("*This is a fake merchant selling dubious relics. You can browse and buy, or throw a Foul Potion (use_potion) to start a fight.*");
+        sb.AppendLine();
+
+        // Reuse shop formatting for the nested shop object
+        if (fm.TryGetValue("shop", out var shopObj) && shopObj is Dictionary<string, object?> shopData)
+            FormatShopMarkdown(sb, shopData);
+    }
+
+    private static void FormatMapMarkdown(StringBuilder sb, Dictionary<string, object?> map)
+    {
         // Path taken
         if (map.TryGetValue("visited", out var visitedObj) && visitedObj is List<Dictionary<string, object?>> visited && visited.Count > 0)
         {
@@ -379,16 +417,24 @@ public static partial class McpMod
             sb.AppendLine();
         }
 
-        // Next options — the key decision section
+        // Build node lookup for path traversal
+        var nodeLookup = new Dictionary<string, Dictionary<string, object?>>();
+        if (map.TryGetValue("nodes", out var nodesObj) && nodesObj is List<Dictionary<string, object?>> nodes)
+        {
+            foreach (var node in nodes)
+                nodeLookup[$"{node["col"]},{node["row"]}"] = node;
+        }
+
+        // Next options with future path trees
         if (map.TryGetValue("next_options", out var optObj) && optObj is List<Dictionary<string, object?>> options && options.Count > 0)
         {
             sb.AppendLine("## Choose Next Node");
             foreach (var opt in options)
             {
-                string lookahead = "";
-                if (opt.TryGetValue("leads_to", out var leadsObj) && leadsObj is List<Dictionary<string, object?>> leads && leads.Count > 0)
-                    lookahead = " → leads to: " + string.Join(", ", leads.Select(l => $"{l["type"]}({l["col"]},{l["row"]})"));
-                sb.AppendLine($"- [{opt["index"]}] **{opt["type"]}** ({opt["col"]},{opt["row"]}){lookahead}");
+                sb.AppendLine($"- [{opt["index"]}] **{opt["type"]}** ({opt["col"]},{opt["row"]})");
+                string tree = BuildFuturePathTree(opt, nodeLookup);
+                if (tree.Length > 0)
+                    sb.AppendLine($"  Future paths: {tree}");
             }
             sb.AppendLine();
         }
@@ -398,71 +444,68 @@ public static partial class McpMod
             sb.AppendLine("No travelable nodes available.");
             sb.AppendLine();
         }
+    }
 
-        // Full map overview — compact row-by-row
-        if (map.TryGetValue("nodes", out var nodesObj) && nodesObj is List<Dictionary<string, object?>> nodes && nodes.Count > 0)
+    /// <summary>
+    /// BFS from a node through its children to build a future path tree string.
+    /// Format: -> Type (col,row) or Type (col,row) -> Type (col,row) or ...
+    /// </summary>
+    private static string BuildFuturePathTree(Dictionary<string, object?> startNode, Dictionary<string, Dictionary<string, object?>> nodeLookup)
+    {
+        // Look up the canonical node (with children) from the full node list
+        string startKey = $"{startNode["col"]},{startNode["row"]}";
+        var canonicalStart = nodeLookup.TryGetValue(startKey, out var cs) ? cs : startNode;
+        var currentKeys = GetChildKeys(canonicalStart);
+        var sb = new StringBuilder();
+
+        while (currentKeys.Count > 0)
         {
-            // Collect visited and travelable coords for markers
-            var visitedSet = new HashSet<string>();
-            if (map.TryGetValue("visited", out var v2) && v2 is List<Dictionary<string, object?>> vList)
-                foreach (var vn in vList)
-                    visitedSet.Add($"{vn["col"]},{vn["row"]}");
+            // Collect node info for this level
+            var levelNodes = new List<(string type, int col, int row)>();
+            var nextKeys = new HashSet<string>();
 
-            var travelableSet = new HashSet<string>();
-            if (map.TryGetValue("next_options", out var o2) && o2 is List<Dictionary<string, object?>> oList)
-                foreach (var on in oList)
-                    travelableSet.Add($"{on["col"]},{on["row"]}");
-
-            string? currentKey = null;
-            if (map.TryGetValue("current_position", out var cpObj) && cpObj is Dictionary<string, object?> cp)
-                currentKey = $"{cp["col"]},{cp["row"]}";
-
-            // Group nodes by row
-            var byRow = new SortedDictionary<int, List<Dictionary<string, object?>>>();
-            foreach (var node in nodes)
+            foreach (var key in currentKeys.OrderBy(k => k))
             {
-                int row = node["row"] is int r ? r : Convert.ToInt32(node["row"]);
-                if (!byRow.TryGetValue(row, out var rowList))
-                    byRow[row] = rowList = new List<Dictionary<string, object?>>();
-                rowList.Add(node);
-            }
-
-            sb.AppendLine("## Map Overview");
-            sb.AppendLine("```");
-            sb.AppendLine("Legend: · = visited, * = current, → = next option");
-            sb.AppendLine();
-            foreach (var (row, rowNodes) in byRow)
-            {
-                var sorted = rowNodes.OrderBy(n => n["col"] is int c ? c : Convert.ToInt32(n["col"])).ToList();
-                var labels = new List<string>();
-                foreach (var node in sorted)
+                if (nodeLookup.TryGetValue(key, out var node))
                 {
                     string type = node["type"]?.ToString() ?? "Unknown";
-                    string key = $"{node["col"]},{node["row"]}";
+                    int col = node["col"] is int c ? c : Convert.ToInt32(node["col"]);
+                    int row = node["row"] is int r ? r : Convert.ToInt32(node["row"]);
+                    levelNodes.Add((type, col, row));
 
-                    string marker = "";
-                    if (key == currentKey) marker = "*";
-                    else if (travelableSet.Contains(key)) marker = "→";
-                    else if (visitedSet.Contains(key)) marker = "·";
-
-                    labels.Add($"{marker}{type}({node["col"]},{node["row"]})");
+                    foreach (var childKey in GetChildKeys(node))
+                        nextKeys.Add(childKey);
                 }
-                sb.AppendLine($"  Row {row,2}: {string.Join("  ", labels)}");
             }
-            sb.AppendLine("```");
-            sb.AppendLine();
+
+            if (levelNodes.Count == 0) break;
+
+            sb.Append("-> ");
+            sb.Append(string.Join(" or ", levelNodes.Select(n => $"{n.type} ({n.col},{n.row})")));
+            sb.Append(' ');
+
+            currentKeys = nextKeys;
         }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static HashSet<string> GetChildKeys(Dictionary<string, object?> node)
+    {
+        var keys = new HashSet<string>();
+        if (node.TryGetValue("children", out var childrenObj) && childrenObj is System.Collections.IList childList)
+        {
+            foreach (var child in childList)
+            {
+                if (child is System.Collections.IList coords && coords.Count >= 2)
+                    keys.Add($"{coords[0]},{coords[1]}");
+            }
+        }
+        return keys;
     }
 
     private static void FormatRewardsMarkdown(StringBuilder sb, Dictionary<string, object?> rewards)
     {
-        if (rewards.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
-        {
-            sb.AppendLine("## Player (You)");
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]} | Potion slots: {player["open_potion_slots"]}/{player["potion_slots"]} open");
-            sb.AppendLine();
-        }
-
         if (rewards.TryGetValue("items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> items && items.Count > 0)
         {
             sb.AppendLine("## Rewards");
@@ -518,12 +561,6 @@ public static partial class McpMod
         if (relicSelect.TryGetValue("prompt", out var p) && p != null)
             sb.AppendLine($"*{p}*");
         sb.AppendLine();
-
-        if (relicSelect.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
-        {
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
-            sb.AppendLine();
-        }
 
         if (relicSelect.TryGetValue("relics", out var relicsObj) && relicsObj is List<Dictionary<string, object?>> relics)
         {
@@ -592,12 +629,6 @@ public static partial class McpMod
         }
         sb.AppendLine();
 
-        if (cardSelect.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
-        {
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
-            sb.AppendLine();
-        }
-
         if (cardSelect.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
         {
             sb.AppendLine("### Cards");
@@ -619,15 +650,98 @@ public static partial class McpMod
         sb.AppendLine();
     }
 
-    private static void FormatTreasureMarkdown(StringBuilder sb, Dictionary<string, object?> treasure)
+    private static void FormatBundleSelectMarkdown(StringBuilder sb, Dictionary<string, object?> bundleSelect)
     {
-        if (treasure.TryGetValue("player", out var playerObj) && playerObj is Dictionary<string, object?> player)
+        sb.AppendLine("## Bundle Selection");
+
+        if (bundleSelect.TryGetValue("prompt", out var promptObj) && promptObj != null)
+            sb.AppendLine($"*{promptObj}*");
+        sb.AppendLine();
+
+        if (bundleSelect.TryGetValue("bundles", out var bundlesObj) && bundlesObj is List<Dictionary<string, object?>> bundles && bundles.Count > 0)
         {
-            sb.AppendLine("## Player (You)");
-            sb.AppendLine($"**{player["character"]}** — HP: {player["hp"]}/{player["max_hp"]} | Gold: {player["gold"]}");
+            sb.AppendLine("### Bundles");
+            foreach (var bundle in bundles)
+            {
+                sb.AppendLine($"- [{bundle["index"]}] Bundle with {bundle["card_count"]} card(s)");
+                if (bundle.TryGetValue("cards", out var cardsObj) && cardsObj is List<Dictionary<string, object?>> cards)
+                {
+                    foreach (var card in cards)
+                        sb.AppendLine($"  {card["name"]} ({card["cost"]}) [{card["type"]}] {card["rarity"]}");
+                }
+            }
             sb.AppendLine();
         }
 
+        bool preview = bundleSelect.TryGetValue("preview_showing", out var pv) && pv is true;
+        bool canConfirm = bundleSelect.TryGetValue("can_confirm", out var cc) && cc is true;
+        bool canCancel = bundleSelect.TryGetValue("can_cancel", out var cn) && cn is true;
+
+        if (preview)
+        {
+            sb.AppendLine("**Preview is showing** - use `confirm_bundle_selection()` to confirm or `cancel_bundle_selection()` to go back.");
+            if (bundleSelect.TryGetValue("preview_cards", out var previewCardsObj) && previewCardsObj is List<Dictionary<string, object?>> previewCards && previewCards.Count > 0)
+            {
+                sb.AppendLine("### Preview Cards");
+                foreach (var card in previewCards)
+                    sb.AppendLine($"- **{card["name"]}** ({card["cost"]} energy) [{card["type"]}] {card["rarity"]} - {card["description"]}");
+                sb.AppendLine();
+            }
+        }
+        else
+        {
+            sb.AppendLine($"Use `select_bundle(index)` to open a bundle preview. Can confirm: {(canConfirm ? "Yes" : "No")} | Can cancel: {(canCancel ? "Yes" : "No")}");
+            sb.AppendLine();
+        }
+    }
+
+    private static void FormatCrystalSphereMarkdown(StringBuilder sb, Dictionary<string, object?> crystalSphere)
+    {
+        sb.AppendLine("## Crystal Sphere");
+
+        if (crystalSphere.TryGetValue("instructions_title", out var titleObj) && titleObj != null)
+            sb.AppendLine($"**{titleObj}**");
+        if (crystalSphere.TryGetValue("instructions_description", out var descObj) && descObj != null)
+            sb.AppendLine(descObj.ToString());
+        sb.AppendLine();
+
+        string tool = crystalSphere.TryGetValue("tool", out var toolObj) ? toolObj?.ToString() ?? "none" : "none";
+        string divinationsLeft = crystalSphere.TryGetValue("divinations_left_text", out var dlObj) && dlObj != null
+            ? dlObj.ToString()!
+            : "Unknown";
+        sb.AppendLine($"**Tool:** {tool} | **Divinations:** {divinationsLeft}");
+        sb.AppendLine();
+
+        if (crystalSphere.TryGetValue("clickable_cells", out var cellsObj) && cellsObj is List<Dictionary<string, object?>> clickableCells && clickableCells.Count > 0)
+        {
+            sb.AppendLine("### Clickable Cells");
+            foreach (var cell in clickableCells)
+                sb.AppendLine($"- ({cell["x"]}, {cell["y"]})");
+            sb.AppendLine();
+        }
+
+        if (crystalSphere.TryGetValue("revealed_items", out var itemsObj) && itemsObj is List<Dictionary<string, object?>> revealedItems && revealedItems.Count > 0)
+        {
+            sb.AppendLine("### Revealed Items");
+            foreach (var item in revealedItems)
+                sb.AppendLine($"- **{item["item_type"]}** at ({item["x"]}, {item["y"]}) size {item["width"]}x{item["height"]}");
+            sb.AppendLine();
+        }
+
+        bool canProceed = crystalSphere.TryGetValue("can_proceed", out var cp) && cp is true;
+        if (canProceed)
+        {
+            sb.AppendLine("Use `crystal_sphere_proceed()` to continue.");
+        }
+        else
+        {
+            sb.AppendLine("Use `crystal_sphere_set_tool(tool)` with `big` or `small`, then `crystal_sphere_click_cell(x, y)`.");
+        }
+        sb.AppendLine();
+    }
+
+    private static void FormatTreasureMarkdown(StringBuilder sb, Dictionary<string, object?> treasure)
+    {
         if (treasure.TryGetValue("relics", out var relicsObj) && relicsObj is List<Dictionary<string, object?>> relics && relics.Count > 0)
         {
             sb.AppendLine("## Treasure Relics");
