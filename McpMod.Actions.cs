@@ -91,11 +91,11 @@ public static partial class McpMod
         if (!CombatManager.Instance.IsInProgress)
             return Error("Not in combat");
         if (!CombatManager.Instance.IsPlayPhase)
-            return Error("Not in play phase — cannot act during enemy turn");
+            return Error("Not in play phase - cannot act during enemy turn");
         if (CombatManager.Instance.PlayerActionsDisabled)
             return Error("Player actions are currently disabled");
         if (!player.Creature.IsAlive)
-            return Error("Player creature is dead — cannot play cards");
+            return Error("Player creature is dead - cannot play cards");
 
         var combatState = player.Creature.CombatState;
         if (combatState == null)
@@ -146,7 +146,7 @@ public static partial class McpMod
         if (!CombatManager.Instance.IsInProgress)
             return Error("Not in combat");
         if (!CombatManager.Instance.IsPlayPhase)
-            return Error("Not in play phase — cannot act during enemy turn");
+            return Error("Not in play phase - cannot act during enemy turn");
         if (CombatManager.Instance.PlayerActionsDisabled)
             return Error("Player actions are currently disabled (turn may already be ending)");
 
@@ -179,7 +179,7 @@ public static partial class McpMod
         if (potion.IsQueued)
             return Error($"Potion '{SafeGetText(() => potion.Title)}' is already queued for use");
         if (potion.Owner.Creature.IsDead)
-            return Error("Cannot use potion — player creature is dead");
+            return Error("Cannot use potion - player creature is dead");
         if (!potion.PassesCustomUsabilityCheck)
             return Error($"Potion '{SafeGetText(() => potion.Title)}' cannot be used right now");
 
@@ -305,7 +305,7 @@ public static partial class McpMod
 
         var hitbox = ancientLayout.GetNodeOrNull<NClickableControl>("%DialogueHitbox");
         if (hitbox == null || !hitbox.Visible || !hitbox.IsEnabled)
-            return Error("Dialogue hitbox not available — dialogue may have ended");
+            return Error("Dialogue hitbox not available - dialogue may have ended");
 
         hitbox.ForceClick();
 
@@ -351,7 +351,7 @@ public static partial class McpMod
 
         if (player.RunState.CurrentRoom is MerchantRoom merchantRoom)
         {
-            // Regular merchant — auto-open inventory if needed
+            // Regular merchant - auto-open inventory if needed
             var merchUI = NMerchantRoom.Instance;
             if (merchUI?.Inventory != null && !merchUI.Inventory.IsOpen)
                 merchUI.OpenInventory();
@@ -361,7 +361,7 @@ public static partial class McpMod
                  && eventRoom.CanonicalEvent is FakeMerchant
                  && (eventRoom.LocalMutableEvent ?? eventRoom.CanonicalEvent) is FakeMerchant fakeMerchant)
         {
-            // Fake merchant event — auto-open via button if needed
+            // Fake merchant event - auto-open via button if needed
             if (!fakeMerchant.StartedFight)
             {
                 var uiRoom = NEventRoom.Instance;
@@ -550,7 +550,7 @@ public static partial class McpMod
             return new Dictionary<string, object?> { ["status"] = "ok", ["message"] = "Proceeding from rest site" };
         }
 
-        // Try merchant — close inventory first if open, then proceed
+        // Try merchant - close inventory first if open, then proceed
         if (NMerchantRoom.Instance is { } merchRoom)
         {
             if (merchRoom.Inventory?.IsOpen == true)
@@ -566,7 +566,7 @@ public static partial class McpMod
             }
         }
 
-        // Try fake merchant — close inventory first if open, then proceed
+        // Try fake merchant - close inventory first if open, then proceed
         if (NEventRoom.Instance is { } evtRoom)
         {
             var fmNode = FindFirst<NFakeMerchant>(evtRoom);
@@ -653,7 +653,7 @@ public static partial class McpMod
     {
         var overlay = NOverlayStack.Instance?.Peek();
         if (overlay is NChooseACardSelectionScreen)
-            return Error("Choose-a-card screen requires no confirmation — use select_card(index) to pick directly");
+            return Error("Choose-a-card screen requires no confirmation - use select_card(index) to pick directly");
         if (overlay is not NCardGridSelectionScreen screen)
             return Error("No card selection screen is open");
 
@@ -708,7 +708,7 @@ public static partial class McpMod
             }
         }
 
-        return Error("No confirm button is currently enabled — select more cards first");
+        return Error("No confirm button is currently enabled - select more cards first");
     }
 
     private static Dictionary<string, object?> ExecuteCancelSelection()
@@ -728,7 +728,7 @@ public static partial class McpMod
                     ["message"] = "Skipping card choice"
                 };
             }
-            return Error("No skip option available — a card must be chosen");
+            return Error("No skip option available - a card must be chosen");
         }
 
         if (overlay is not NCardGridSelectionScreen screen)
@@ -748,7 +748,7 @@ public static partial class McpMod
                     return new Dictionary<string, object?>
                     {
                         ["status"] = "ok",
-                        ["message"] = "Cancelling preview — returning to card selection"
+                        ["message"] = "Cancelling preview - returning to card selection"
                     };
                 }
             }
@@ -766,7 +766,7 @@ public static partial class McpMod
             };
         }
 
-        return Error("No cancel/close button is currently enabled — selection may be mandatory");
+        return Error("No cancel/close button is currently enabled - selection may be mandatory");
     }
 
     private static Dictionary<string, object?> ExecuteSelectBundle(Dictionary<string, JsonElement> data)
@@ -848,7 +848,7 @@ public static partial class McpMod
         var holder = holders[index];
         string cardName = SafeGetText(() => holder.CardModel?.Title) ?? "unknown";
 
-        // Emit the Pressed signal — same path the game UI uses
+        // Emit the Pressed signal - same path the game UI uses
         holder.EmitSignal(NCardHolder.SignalName.Pressed, holder);
 
         return new Dictionary<string, object?>
@@ -866,7 +866,7 @@ public static partial class McpMod
 
         var confirmBtn = hand.GetNodeOrNull<NConfirmButton>("%SelectModeConfirmButton");
         if (confirmBtn == null || !confirmBtn.IsEnabled)
-            return Error("Confirm button is not enabled — select more cards first");
+            return Error("Confirm button is not enabled - select more cards first");
 
         confirmBtn.ForceClick();
 
@@ -931,7 +931,7 @@ public static partial class McpMod
 
         var relicCollection = treasureUI.GetNodeOrNull<NTreasureRoomRelicCollection>("%RelicCollection");
         if (relicCollection?.Visible != true)
-            return Error("Relic collection is not visible — chest may not be opened yet");
+            return Error("Relic collection is not visible - chest may not be opened yet");
 
         if (!data.TryGetValue("index", out var indexElem))
             return Error("Missing 'index' (relic index)");
