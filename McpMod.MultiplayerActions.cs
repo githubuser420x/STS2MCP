@@ -21,6 +21,10 @@ public static partial class McpMod
         if (!RunManager.Instance.NetService.Type.IsMultiplayer())
             return Error("Not in a multiplayer run. Use /api/v1/singleplayer instead.");
 
+        // quit_run doesn't need player context
+        if (action == "quit_run")
+            return ExecuteQuitRun(isMultiplayer: true);
+
         var runState = RunManager.Instance.DebugOnlyGetState()!;
         var player = LocalContext.GetMe(runState);
         if (player == null)

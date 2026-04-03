@@ -211,6 +211,15 @@ public static partial class McpMod
                 else
                     SendError(response, 405, "Method not allowed");
             }
+            else if (path == "/api/v1/menu")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetMenu(request, response);
+                else if (request.HttpMethod == "POST")
+                    HandlePostMenu(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
             else
             {
                 SendError(response, 404, "Not found");
@@ -389,6 +398,69 @@ public static partial class McpMod
         catch (Exception ex)
         {
             SendError(response, 500, $"Action failed: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetMenu(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        try
+        {
+            var stateTask = RunOnMainThread(() => BuildMenuState());
+            var state = stateTask.GetAwaiter().GetResult();
+            SendJson(response, state);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[STS2 MCP] HandleGetMenu: {ex}");
+            try
+            {
+                response.StatusCode = 500;
+                SendJson(response, new Dictionary<string, object?>
+                {
+                    ["error"] = $"Failed to read menu state: {ex.Message}",
+                    ["exception_type"] = ex.GetType().FullName,
+                    ["stack_trace"] = ex.StackTrace
+                });
+            }
+            catch { /* response may be unusable */ }
+        }
+    }
+
+    private static void HandlePostMenu(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        string body;
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            body = reader.ReadToEnd();
+
+        Dictionary<string, JsonElement>? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+        }
+        catch
+        {
+            SendError(response, 400, "Invalid JSON");
+            return;
+        }
+
+        if (parsed == null || !parsed.TryGetValue("action", out var actionElem))
+        {
+            SendError(response, 400, "Missing 'action' field");
+            return;
+        }
+
+        string action = actionElem.GetString() ?? "";
+
+        try
+        {
+            var resultTask = RunOnMainThread(() => ExecuteMenuAction(action, parsed));
+            var result = resultTask.GetAwaiter().GetResult();
+            SendJson(response, result);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[STS2 MCP] HandlePostMenu: {ex}");
+            SendError(response, 500, $"Menu action failed: {ex.Message}");
         }
     }
 }

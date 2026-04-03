@@ -43,6 +43,10 @@ public static partial class McpMod
         if (!RunManager.Instance.IsInProgress)
             return Error("No run in progress");
 
+        // quit_run doesn't need player context
+        if (action == "quit_run")
+            return ExecuteQuitRun(isMultiplayer: false);
+
         var runState = RunManager.Instance.DebugOnlyGetState()!;
         var player = LocalContext.GetMe(runState);
         if (player == null)
