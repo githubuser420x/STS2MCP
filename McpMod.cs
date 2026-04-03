@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -27,6 +29,7 @@ public static partial class McpMod
 
     private static HttpListener? _listener;
     private static Thread? _serverThread;
+    private static string[] _boundPrefixes = Array.Empty<string>();
     private static readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     internal static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -86,22 +89,7 @@ public static partial class McpMod
             tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ProcessMainThreadQueue));
 
             int port = LoadPort();
-
-            _listener = new HttpListener();
-            try
-            {
-                // Try binding to all interfaces first (requires URL ACL: netsh http add urlacl url=http://+:{port}/ user=Everyone)
-                _listener.Prefixes.Add($"http://+:{port}/");
-                _listener.Start();
-            }
-            catch
-            {
-                // Fall back to localhost-only if ACL not configured
-                _listener = new HttpListener();
-                _listener.Prefixes.Add($"http://localhost:{port}/");
-                _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-                _listener.Start();
-            }
+            StartHttpServer(port);
 
             _serverThread = new Thread(ServerLoop)
             {
@@ -110,12 +98,91 @@ public static partial class McpMod
             };
             _serverThread.Start();
 
-            GD.Print($"[STS2 MCP] v{Version} server started on http://localhost:{port}/");
+            GD.Print($"[STS2 MCP] v{Version} server started on {string.Join(", ", _boundPrefixes)}");
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[STS2 MCP] Failed to start: {ex}");
         }
+    }
+
+    private static void StartHttpServer(int port)
+    {
+        var attempts = new List<string[]>
+        {
+            new[] { $"http://+:{port}/" }
+        };
+
+        var ipv4Prefixes = GetIpv4Prefixes(port);
+        if (ipv4Prefixes.Count > 0)
+            attempts.Add(ipv4Prefixes.ToArray());
+
+        attempts.Add(new[]
+        {
+            $"http://localhost:{port}/",
+            $"http://127.0.0.1:{port}/"
+        });
+
+        Exception? lastError = null;
+
+        foreach (var prefixes in attempts)
+        {
+            HttpListener? candidate = null;
+            try
+            {
+                candidate = new HttpListener();
+                foreach (var prefix in prefixes)
+                    candidate.Prefixes.Add(prefix);
+                candidate.Start();
+
+                _listener = candidate;
+                _boundPrefixes = prefixes;
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                try { candidate?.Close(); } catch { }
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not bind STS2 MCP on port {port}. Tried wildcard, explicit IPv4, and loopback prefixes.",
+            lastError);
+    }
+
+    private static List<string> GetIpv4Prefixes(int port)
+    {
+        var prefixes = new List<string>();
+
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                foreach (var addressInfo in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (addressInfo.Address.AddressFamily != AddressFamily.InterNetwork)
+                        continue;
+
+                    var address = addressInfo.Address.ToString();
+                    if (address == "127.0.0.1" || address.StartsWith("169.254.", StringComparison.Ordinal))
+                        continue;
+
+                    var prefix = $"http://{address}:{port}/";
+                    if (!prefixes.Contains(prefix))
+                        prefixes.Add(prefix);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[STS2 MCP] Failed to enumerate IPv4 listeners: {ex.Message}");
+        }
+
+        return prefixes;
     }
 
     private static void ProcessMainThreadQueue()
@@ -187,7 +254,7 @@ public static partial class McpMod
 
             if (path == "/")
             {
-                SendJson(response, new { message = $"Hello from STS2 MCP v{Version}", status = "ok" });
+                SendJson(response, new { message = $"Hello from STS2 MCP v{Version}", status = "ok", bound_prefixes = _boundPrefixes });
             }
             else if (path == "/api/v1/singleplayer")
             {

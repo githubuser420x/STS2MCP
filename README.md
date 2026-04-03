@@ -4,12 +4,12 @@
 
 <p align="center"><em>An Experimental Research Project to Fully-Automate your Slay the Spire 2 Runs</em></p>
 
-A mod for [**Slay the Spire 2**](https://store.steampowered.com/app/2868840/Slay_the_Spire_2/) that lets AI agents play the game. Exposes game state and actions via a localhost REST API, with an optional MCP server for Claude Desktop / Claude Code integration.
+A mod for [**Slay the Spire 2**](https://store.steampowered.com/app/2868840/Slay_the_Spire_2/) that lets AI agents play the game. Exposes game state and actions via a local REST API, with an optional MCP server for Claude Desktop / Claude Code integration.
 
 Singleplayer and multiplayer (co-op) supported. Tested against STS2 `v0.99.1`.
 
 > [!warning]
-> This mod allows external programs to read and control your game via a localhost API. Use at your own risk with runs you care less about.
+> This mod allows external programs to read and control your game via a local API. When the Windows listener can bind an IPv4 interface, other machines on the same network can reach it. Use at your own risk with runs you care less about.
 
 > [!caution]
 > Multiplayer support is in **beta** — expect bugs. Any multiplayer issues encountered with this mod installed are very likely caused by the mod, not the game. Please disable the mod and verify the issue persists before reporting bugs to the STS2 developers.
@@ -22,7 +22,7 @@ Grab the [latest release](https://github.com/Gennadiyev/STS2MCP/releases/latest)
 
 1. Copy `STS2_MCP.dll` and `STS2_MCP.json` to `<game_install>/mods/`
 2. Launch the game and enable mods in settings (a consent dialog appears on first launch)
-3. The mod starts an HTTP server on `localhost:15526` automatically
+3. The mod starts an HTTP server on port `15526` automatically. It first tries a wildcard bind, then explicit local IPv4 addresses, and finally loopback-only (`localhost`) if broader binds are unavailable.
 
 ### 2. Give Your AI Instructions to Interact with the Game
 
