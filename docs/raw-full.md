@@ -57,7 +57,7 @@ Always present at the top level (except `menu`). Contains everything about the l
   "draw_pile_count": 15,
   "discard_pile_count": 3,
   "exhaust_pile_count": 1,
-  "draw_pile": [ /* Pile Card Objects (shuffled to hide draw order) */ ],
+  "draw_pile": [ /* Pile Card Objects (sorted by rarity, matching in-game display) */ ],
   "discard_pile": [ /* Pile Card Objects */ ],
   "exhaust_pile": [ /* Pile Card Objects */ ],
   "orbs": [ /* Orb Objects */ ],   // Defect only; omitted if orb capacity is 0

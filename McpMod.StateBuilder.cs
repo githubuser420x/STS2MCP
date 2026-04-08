@@ -310,10 +310,12 @@ public static partial class McpMod
             state["discard_pile_count"] = combatState.DiscardPile.Cards.Count;
             state["exhaust_pile_count"] = combatState.ExhaustPile.Cards.Count;
 
-            // Pile contents (draw pile is shuffled to avoid leaking actual draw order)
-            var drawPileList = BuildPileCardList(combatState.DrawPile.Cards, PileType.Draw);
-            ShuffleList(drawPileList);
-            state["draw_pile"] = drawPileList;
+            // Pile contents (draw pile sorted by rarity then card ID, matching in-game display)
+            var drawCards = combatState.DrawPile.Cards.ToList();
+            drawCards.Sort((c1, c2) => c1.Rarity != c2.Rarity
+                ? c1.Rarity.CompareTo(c2.Rarity)
+                : string.Compare(c1.Id.Entry, c2.Id.Entry, StringComparison.Ordinal));
+            state["draw_pile"] = BuildPileCardList(drawCards, PileType.Draw);
             state["discard_pile"] = BuildPileCardList(combatState.DiscardPile.Cards, PileType.Discard);
             state["exhaust_pile"] = BuildPileCardList(combatState.ExhaustPile.Cards, PileType.Exhaust);
 
@@ -436,15 +438,6 @@ public static partial class McpMod
         state["can_play"] = unplayableReason == UnplayableReason.None;
         state["unplayable_reason"] = unplayableReason != UnplayableReason.None ? unplayableReason.ToString() : null;
         return state;
-    }
-
-    private static void ShuffleList<T>(List<T> list)
-    {
-        for (int i = list.Count - 1; i > 0; i--)
-        {
-            int j = Random.Shared.Next(i + 1);
-            (list[i], list[j]) = (list[j], list[i]);
-        }
     }
 
     private static List<Dictionary<string, object?>> BuildPileCardList(IEnumerable<CardModel> cards, PileType pile)
