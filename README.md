@@ -24,6 +24,42 @@ Grab the [latest release](https://github.com/Gennadiyev/STS2MCP/releases/latest)
 2. Launch the game and enable mods in settings (a consent dialog appears on first launch)
 3. The mod starts an HTTP server on `localhost:15526` automatically
 
+> [!note]
+> The release DLL is a platform-agnostic .NET assembly — the same `STS2_MCP.dll` and `STS2_MCP.json` work on Windows, Linux, and macOS. No separate builds are needed.
+
+#### macOS install
+
+On macOS, the mods directory lives inside the app bundle. The default Steam install path is:
+
+```
+~/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/
+    SlayTheSpire2.app/Contents/MacOS/mods/
+```
+
+To install, right-click `SlayTheSpire2.app` → **Show Package Contents**, navigate to `Contents/MacOS/`, and create a `mods` folder. Or from the terminal:
+
+```bash
+GAME_DIR="$HOME/Library/Application Support/Steam/steamapps/common/Slay the Spire 2"
+MODS_DIR="$GAME_DIR/SlayTheSpire2.app/Contents/MacOS/mods"
+mkdir -p "$MODS_DIR"
+cp STS2_MCP.dll "$MODS_DIR/"
+cp STS2_MCP.json "$MODS_DIR/"
+```
+
+Launch the game and open **Settings → Mods**. The mod should appear in the list. A consent dialog appears on first launch — accept it to enable mod loading. Once enabled, verify the HTTP server is running:
+
+```bash
+curl -s http://localhost:15526/
+```
+
+A successful response looks like:
+
+```json
+{"message": "Hello from STS2 MCP v0.3.4", "status": "ok"}
+```
+
+If you get "Connection refused", the mod is not loaded — check that mods are enabled in the game's settings.
+
 ### 2. Give Your AI Instructions to Interact with the Game
 
 **Clone or download the repository**, then:
@@ -31,6 +67,18 @@ Grab the [latest release](https://github.com/Gennadiyev/STS2MCP/releases/latest)
 | I prefer a skill | I prefer an MCP Server |
 |---|---|
 | Tell AI to reference docs/raw-*.md. Sit back, and watch it play. | Requires [Python 3.11+](https://www.python.org/) and [uv](https://docs.astral.sh/uv/). Follow the instructions below ⬇️ |
+
+#### MCP server setup
+
+Install [uv](https://docs.astral.sh/uv/) if you don't have it (macOS: `brew install uv`). Then run the server once to install dependencies:
+
+```bash
+uv run --directory /path/to/STS2_MCP/mcp python server.py --help
+```
+
+`uv` reads `mcp/pyproject.toml`, creates an isolated virtual environment, and installs the pinned dependencies from `mcp/uv.lock`. Subsequent runs reuse the environment instantly.
+
+Add the server to your AI client's MCP config:
 
 ```json
 {
@@ -43,9 +91,14 @@ Grab the [latest release](https://github.com/Gennadiyev/STS2MCP/releases/latest)
 }
 ```
 
-**Claude Code**: add to your project's `.mcp.json`:
+**Claude Code**: add to your project's `.mcp.json`.
 **Claude Desktop**: add to `claude_desktop_config.json` with the same config as above.
 *Other agents should have similar config options for custom MCP servers.*
+
+> [!tip]
+> On macOS, use the absolute path to `uv` (e.g. `/opt/homebrew/bin/uv`) in the `command` field. GUI-launched apps may not inherit your shell's `PATH`, which would prevent the server from starting.
+
+Restart your Claude session after adding the config. To verify the MCP server is working, ask Claude to call `get_game_state` — with the game running, it should return the current game state.
 
 The MCP server accepts `--host` and `--port` options if you need non-default settings.
 
@@ -74,6 +127,40 @@ The script builds `STS2_MCP.dll` into `out/STS2_MCP/`. Copy it along with the ma
 out/STS2_MCP/STS2_MCP.dll           ->  <game_install>/mods/STS2_MCP.dll
 mod_manifest.json                   ->  <game_install>/mods/STS2_MCP.json
 ```
+
+### Build instructions for macOS
+
+Install dotnet to compile the mod:
+
+```bash
+brew install dotnet@9
+export DOTNET_ROOT="/opt/homebrew/opt/dotnet@9/libexec"
+export PATH="$DOTNET_ROOT:$PATH"
+```
+
+Homebrew installs `dotnet@9` as keg-only, so the exports above are required for the current session. Add them to `~/.zshrc` to persist across sessions.
+
+Build with `dotnet` directly (the PowerShell script is Windows-only):
+
+```bash
+dotnet build STS2_MCP.csproj -c Release -o out/STS2_MCP \
+  -p:STS2GameDir="$HOME/Library/Application Support/Steam/steamapps/common/Slay the Spire 2"
+```
+
+On macOS the game ships as an app bundle. The `.csproj` detects macOS and resolves the data directory to `SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64` automatically.
+
+The mods directory on macOS lives inside the app bundle at `SlayTheSpire2.app/Contents/MacOS/mods/`. Finder hides bundle contents by default — to browse it in the GUI, right-click `SlayTheSpire2.app` → **Show Package Contents**. Or copy from the terminal:
+
+```bash
+GAME_DIR="$HOME/Library/Application Support/Steam/steamapps/common/Slay the Spire 2"
+MODS_DIR="$GAME_DIR/SlayTheSpire2.app/Contents/MacOS/mods"
+mkdir -p "$MODS_DIR"
+cp out/STS2_MCP/STS2_MCP.dll "$MODS_DIR/"
+cp mod_manifest.json "$MODS_DIR/STS2_MCP.json"
+```
+
+> [!NOTE] 
+> `mod_manifest.json` is renamed to `STS2_MCP.json` on copy — the game's mod loader expects the manifest filename to match the mod ID.
 
 ## License
 
