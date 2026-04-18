@@ -654,10 +654,12 @@ public static partial class McpMod
             state["discard_pile_count"] = combatState.DiscardPile.Cards.Count;
             state["exhaust_pile_count"] = combatState.ExhaustPile.Cards.Count;
 
-            // Pile contents (draw pile is shuffled to avoid leaking actual draw order)
-            var drawPileList = BuildPileCardList(combatState.DrawPile.Cards, PileType.Draw);
-            ShuffleList(drawPileList);
-            state["draw_pile"] = drawPileList;
+            // Pile contents (draw pile sorted by rarity then card ID, matching in-game display)
+            var drawCards = combatState.DrawPile.Cards.ToList();
+            drawCards.Sort((c1, c2) => c1.Rarity != c2.Rarity
+                ? c1.Rarity.CompareTo(c2.Rarity)
+                : string.Compare(c1.Id.Entry, c2.Id.Entry, StringComparison.Ordinal));
+            state["draw_pile"] = BuildPileCardList(drawCards, PileType.Draw);
             state["discard_pile"] = BuildPileCardList(combatState.DiscardPile.Cards, PileType.Discard);
             state["exhaust_pile"] = BuildPileCardList(combatState.ExhaustPile.Cards, PileType.Exhaust);
 
@@ -691,6 +693,13 @@ public static partial class McpMod
                 state["orbs"] = orbs;
                 state["orb_slots"] = orbQueue.Capacity;
                 state["orb_empty_slots"] = orbQueue.Capacity - orbQueue.Orbs.Count;
+            }
+
+            // Pets (Osty for Necrobinder)
+            var pets = BuildPetsState(player);
+            if (pets.Count > 0)
+            {
+                state["pets"] = pets;
             }
         }
 
@@ -772,34 +781,37 @@ public static partial class McpMod
         return null;
     }
 
-    private static Dictionary<string, object?> BuildCardState(CardModel card, int index)
+    /// <summary>
+    /// Builds the common card display fields shared across all card serialization contexts.
+    /// Callers merge context-specific fields (e.g. index, can_play, target_type) on top.
+    /// </summary>
+    private static Dictionary<string, object?> BuildCardInfo(CardModel card, PileType pile = PileType.None)
     {
-        card.CanPlay(out var unplayableReason, out _);
-
         return new Dictionary<string, object?>
         {
-            ["index"] = index,
             ["id"] = card.Id.Entry,
-            ["name"] = card.Title,
+            ["name"] = SafeGetText(() => card.Title),
             ["type"] = card.Type.ToString(),
             ["cost"] = GetCostDisplay(card),
             ["star_cost"] = GetStarCostDisplay(card),
-            ["description"] = SafeGetCardDescription(card),
-            ["target_type"] = card.TargetType.ToString(),
-            ["can_play"] = unplayableReason == UnplayableReason.None,
-            ["unplayable_reason"] = unplayableReason != UnplayableReason.None ? unplayableReason.ToString() : null,
+            ["description"] = SafeGetCardDescription(card, pile),
+            ["rarity"] = card.Rarity.ToString(),
             ["is_upgraded"] = card.IsUpgraded,
             ["keywords"] = BuildHoverTips(card.HoverTips)
         };
     }
 
-    private static void ShuffleList<T>(List<T> list)
+    private static Dictionary<string, object?> BuildCardState(CardModel card, int index)
     {
-        for (int i = list.Count - 1; i > 0; i--)
-        {
-            int j = Random.Shared.Next(i + 1);
-            (list[i], list[j]) = (list[j], list[i]);
-        }
+        card.CanPlay(out var unplayableReason, out _);
+
+        var state = BuildCardInfo(card);
+        state["index"] = index;
+        state["description"] = SafeGetCardDescription(card); // hand cards use default pile
+        state["target_type"] = card.TargetType.ToString();
+        state["can_play"] = unplayableReason == UnplayableReason.None;
+        state["unplayable_reason"] = unplayableReason != UnplayableReason.None ? unplayableReason.ToString() : null;
+        return state;
     }
 
     private static List<Dictionary<string, object?>> BuildPileCardList(IEnumerable<CardModel> cards, PileType pile)
@@ -807,6 +819,7 @@ public static partial class McpMod
         var list = new List<Dictionary<string, object?>>();
         foreach (var card in cards)
         {
+            // Pile cards only need a subset - keep it lightweight
             list.Add(new Dictionary<string, object?>
             {
                 ["name"] = SafeGetText(() => card.Title),
@@ -1016,7 +1029,7 @@ public static partial class McpMod
             {
                 ["index"] = index,
                 ["category"] = "relic",
-                ["cost"] = entry.Cost,
+                ["price"] = entry.Cost,
                 ["is_stocked"] = entry.IsStocked,
                 ["can_afford"] = entry.EnoughGold
             };
@@ -1085,20 +1098,22 @@ public static partial class McpMod
             {
                 ["index"] = index,
                 ["category"] = "card",
-                ["cost"] = entry.Cost,
+                ["price"] = entry.Cost,
                 ["is_stocked"] = entry.IsStocked,
                 ["can_afford"] = entry.EnoughGold,
                 ["on_sale"] = entry.IsOnSale
             };
             if (entry.CreationResult?.Card is { } card)
             {
-                item["card_id"] = card.Id.Entry;
-                item["card_name"] = SafeGetText(() => card.Title);
-                item["card_type"] = card.Type.ToString();
-                item["card_rarity"] = card.Rarity.ToString();
-                item["card_star_cost"] = GetStarCostDisplay(card);
-                item["card_description"] = SafeGetCardDescription(card, PileType.None);
-                item["keywords"] = BuildHoverTips(card.HoverTips);
+                var cardInfo = BuildCardInfo(card);
+                item["card_id"] = cardInfo["id"];
+                item["card_name"] = cardInfo["name"];
+                item["card_type"] = cardInfo["type"];
+                item["card_cost"] = cardInfo["cost"];
+                item["card_star_cost"] = cardInfo["star_cost"];
+                item["card_rarity"] = cardInfo["rarity"];
+                item["card_description"] = cardInfo["description"];
+                item["keywords"] = cardInfo["keywords"];
             }
             items.Add(item);
             index++;
@@ -1111,7 +1126,7 @@ public static partial class McpMod
             {
                 ["index"] = index,
                 ["category"] = "relic",
-                ["cost"] = entry.Cost,
+                ["price"] = entry.Cost,
                 ["is_stocked"] = entry.IsStocked,
                 ["can_afford"] = entry.EnoughGold
             };
@@ -1133,7 +1148,7 @@ public static partial class McpMod
             {
                 ["index"] = index,
                 ["category"] = "potion",
-                ["cost"] = entry.Cost,
+                ["price"] = entry.Cost,
                 ["is_stocked"] = entry.IsStocked,
                 ["can_afford"] = entry.EnoughGold
             };
@@ -1155,7 +1170,7 @@ public static partial class McpMod
             {
                 ["index"] = index,
                 ["category"] = "card_removal",
-                ["cost"] = removal.Cost,
+                ["price"] = removal.Cost,
                 ["is_stocked"] = removal.IsStocked,
                 ["can_afford"] = removal.EnoughGold
             });
@@ -1384,19 +1399,9 @@ public static partial class McpMod
             var card = holder.CardModel;
             if (card == null) continue;
 
-            cards.Add(new Dictionary<string, object?>
-            {
-                ["index"] = index,
-                ["id"] = card.Id.Entry,
-                ["name"] = SafeGetText(() => card.Title),
-                ["type"] = card.Type.ToString(),
-                ["cost"] = GetCostDisplay(card),
-                ["star_cost"] = GetStarCostDisplay(card),
-                ["description"] = SafeGetCardDescription(card, PileType.None),
-                ["rarity"] = card.Rarity.ToString(),
-                ["is_upgraded"] = card.IsUpgraded,
-                ["keywords"] = BuildHoverTips(card.HoverTips)
-            });
+            var cardInfo = BuildCardInfo(card);
+            cardInfo["index"] = index;
+            cards.Add(cardInfo);
             index++;
         }
         state["cards"] = cards;
@@ -1440,19 +1445,9 @@ public static partial class McpMod
             var card = holder.CardModel;
             if (card == null) continue;
 
-            cards.Add(new Dictionary<string, object?>
-            {
-                ["index"] = index,
-                ["id"] = card.Id.Entry,
-                ["name"] = SafeGetText(() => card.Title),
-                ["type"] = card.Type.ToString(),
-                ["cost"] = GetCostDisplay(card),
-                ["star_cost"] = GetStarCostDisplay(card),
-                ["description"] = SafeGetCardDescription(card, PileType.None),
-                ["rarity"] = card.Rarity.ToString(),
-                ["is_upgraded"] = card.IsUpgraded,
-                ["keywords"] = BuildHoverTips(card.HoverTips)
-            });
+            var cardInfo = BuildCardInfo(card);
+            cardInfo["index"] = index;
+            cards.Add(cardInfo);
             index++;
         }
         state["cards"] = cards;
@@ -1467,9 +1462,28 @@ public static partial class McpMod
                             || (previewGeneric?.Visible ?? false);
         state["preview_showing"] = previewShowing;
 
-        // Button states
-        var closeButton = screen.GetNodeOrNull<NBackButton>("%Close");
-        state["can_cancel"] = closeButton?.IsEnabled ?? false;
+        // Button states - when a preview is open, cancel goes through the
+        // preview container's Cancel / PreviewCancel button (same path as
+        // the action handler), not the top-level %Close button.
+        bool canCancel = false;
+        if (previewShowing)
+        {
+            foreach (var container in new[] { previewSingle, previewMulti, previewGeneric })
+            {
+                if (container?.Visible == true)
+                {
+                    var cancelBtn = container.GetNodeOrNull<NBackButton>("Cancel")
+                                    ?? container.GetNodeOrNull<NBackButton>("%PreviewCancel");
+                    if (cancelBtn?.IsEnabled == true) { canCancel = true; break; }
+                }
+            }
+        }
+        if (!canCancel)
+        {
+            var closeButton = screen.GetNodeOrNull<NBackButton>("%Close");
+            canCancel = closeButton?.IsEnabled ?? false;
+        }
+        state["can_cancel"] = canCancel;
 
         // Confirm button - search all preview containers and main screen
         bool canConfirm = false;
@@ -1514,19 +1528,9 @@ public static partial class McpMod
             var card = holder.CardModel;
             if (card == null) continue;
 
-            cards.Add(new Dictionary<string, object?>
-            {
-                ["index"] = index,
-                ["id"] = card.Id.Entry,
-                ["name"] = SafeGetText(() => card.Title),
-                ["type"] = card.Type.ToString(),
-                ["cost"] = GetCostDisplay(card),
-                ["star_cost"] = GetStarCostDisplay(card),
-                ["description"] = SafeGetCardDescription(card, PileType.None),
-                ["rarity"] = card.Rarity.ToString(),
-                ["is_upgraded"] = card.IsUpgraded,
-                ["keywords"] = BuildHoverTips(card.HoverTips)
-            });
+            var cardInfo = BuildCardInfo(card);
+            cardInfo["index"] = index;
+            cards.Add(cardInfo);
             index++;
         }
         state["cards"] = cards;
@@ -1555,19 +1559,9 @@ public static partial class McpMod
             int cardIndex = 0;
             foreach (var card in bundle.Bundle)
             {
-                cards.Add(new Dictionary<string, object?>
-                {
-                    ["index"] = cardIndex,
-                    ["id"] = card.Id.Entry,
-                    ["name"] = SafeGetText(() => card.Title),
-                    ["type"] = card.Type.ToString(),
-                    ["cost"] = GetCostDisplay(card),
-                    ["star_cost"] = GetStarCostDisplay(card),
-                    ["description"] = SafeGetCardDescription(card, PileType.None),
-                    ["rarity"] = card.Rarity.ToString(),
-                    ["is_upgraded"] = card.IsUpgraded,
-                    ["keywords"] = BuildHoverTips(card.HoverTips)
-                });
+                var cardInfo = BuildCardInfo(card);
+                cardInfo["index"] = cardIndex;
+                cards.Add(cardInfo);
                 cardIndex++;
             }
 
@@ -1595,19 +1589,9 @@ public static partial class McpMod
                 var card = holder.CardModel;
                 if (card == null) continue;
 
-                previewCards.Add(new Dictionary<string, object?>
-                {
-                    ["index"] = previewIndex,
-                    ["id"] = card.Id.Entry,
-                    ["name"] = SafeGetText(() => card.Title),
-                    ["type"] = card.Type.ToString(),
-                    ["cost"] = GetCostDisplay(card),
-                    ["star_cost"] = GetStarCostDisplay(card),
-                    ["description"] = SafeGetCardDescription(card, PileType.None),
-                    ["rarity"] = card.Rarity.ToString(),
-                    ["is_upgraded"] = card.IsUpgraded,
-                    ["keywords"] = BuildHoverTips(card.HoverTips)
-                });
+                var cardInfo = BuildCardInfo(card);
+                cardInfo["index"] = previewIndex;
+                previewCards.Add(cardInfo);
                 previewIndex++;
             }
         }
@@ -1652,18 +1636,10 @@ public static partial class McpMod
             var card = holder.CardModel;
             if (card == null) continue;
 
-            selectableCards.Add(new Dictionary<string, object?>
-            {
-                ["index"] = index,
-                ["id"] = card.Id.Entry,
-                ["name"] = SafeGetText(() => card.Title),
-                ["type"] = card.Type.ToString(),
-                ["cost"] = GetCostDisplay(card),
-                ["star_cost"] = GetStarCostDisplay(card),
-                ["description"] = SafeGetCardDescription(card),
-                ["is_upgraded"] = card.IsUpgraded,
-                ["keywords"] = BuildHoverTips(card.HoverTips)
-            });
+            var cardInfo = BuildCardInfo(card);
+            cardInfo["index"] = index;
+            cardInfo["description"] = SafeGetCardDescription(card); // hand cards use default pile
+            selectableCards.Add(cardInfo);
             index++;
         }
         state["cards"] = selectableCards;
@@ -1717,6 +1693,7 @@ public static partial class McpMod
                 ["id"] = relic.Id.Entry,
                 ["name"] = SafeGetText(() => relic.Title),
                 ["description"] = SafeGetText(() => relic.DynamicDescription),
+                ["rarity"] = relic.Rarity.ToString(),
                 ["keywords"] = BuildHoverTips(relic.HoverTipsExcludingRelic)
             });
             index++;
@@ -2449,5 +2426,30 @@ public static partial class McpMod
         result["encounters"] = encounters;
 
         return result;
+    }
+
+    private static List<Dictionary<string, object?>> BuildPetsState(Player player)
+    {
+        var pets = new List<Dictionary<string, object?>>();
+        var combatState = player.PlayerCombatState;
+        if (combatState == null) return pets;
+
+        // Check Osty specifically (Byrdpip/PaelsLegion are cosmetic with no real combat state)
+        var osty = combatState.GetPet<Osty>();
+        if (osty != null)
+        {
+            pets.Add(new Dictionary<string, object?>
+            {
+                ["id"] = osty.Monster?.Id.Entry ?? "OSTY",
+                ["name"] = SafeGetText(() => osty.Monster?.Title) ?? "Otsy",
+                ["alive"] = osty.IsAlive,
+                ["hp"] = osty.CurrentHp,
+                ["max_hp"] = osty.MaxHp,
+                ["block"] = osty.Block,
+                ["status"] = BuildPowersState(osty)
+            });
+        }
+
+        return pets;
     }
 }

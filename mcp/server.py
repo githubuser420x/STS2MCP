@@ -319,7 +319,7 @@ async def event_choose_option(option_index: int) -> str:
     Also used to click the Proceed option after an event resolves.
 
     Args:
-        option_index: 0-based index of the unlocked option.
+        option_index: 0-based index of the option from the event state.
     """
     try:
         return await _post({"action": "choose_event_option", "index": option_index})
@@ -526,8 +526,9 @@ async def crystal_sphere_proceed() -> str:
 async def mp_get_game_state(format: str = "markdown") -> str:
     """[Multiplayer] Get the current multiplayer game state.
 
-    Returns full game state for ALL players: HP, powers, relics, potions,
-    plus multiplayer-specific data: map votes, event votes, treasure bids,
+    Returns a summary of all players (HP, gold, alive status) plus full
+    detail for the local player (relics, potions, deck, etc.), along with
+    multiplayer-specific data: map votes, event votes, treasure bids,
     end-turn ready status. Only works during a multiplayer run.
 
     Args:
@@ -639,7 +640,7 @@ async def mp_event_choose_option(option_index: int) -> str:
     For individual events: immediate choice, same as singleplayer.
 
     Args:
-        option_index: 0-based index of the unlocked option.
+        option_index: 0-based index of the option from the event state.
     """
     try:
         return await _mp_post({"action": "choose_event_option", "index": option_index})

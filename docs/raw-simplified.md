@@ -34,6 +34,7 @@ Every JSON response includes:
 | `event` | Event or Ancient encounter | `choose_event_option`, `advance_dialogue` |
 | `rest_site` | Rest site | `choose_rest_option`, `proceed` |
 | `shop` | Shop (auto-opens inventory) | `shop_purchase`, `proceed` |
+| `fake_merchant` | Fake Merchant event (relic-only shop) | `shop_purchase`, `proceed` |
 | `treasure` | Treasure room (auto-opens chest) | `claim_treasure_relic`, `proceed` |
 | `card_select` | Deck card selection overlay (transform, upgrade, remove, choose-a-card) | `select_card`, `confirm_selection`, `cancel_selection` |
 | `bundle_select` | Card bundle choice overlay | `select_bundle`, `confirm_bundle_selection`, `cancel_bundle_selection` |
@@ -87,7 +88,7 @@ All POST requests use JSON body with `"action"` field. All responses include `{ 
 
 | Action | Parameters | When to Use |
 |---|---|---|
-| `choose_event_option` | `index`: int | Choose an unlocked event option. Also used for "Proceed" options. |
+| `choose_event_option` | `index`: int | Choose an event option by index from state. Locked options return an error. Also used for "Proceed" options. |
 | `advance_dialogue` | _(none)_ | Click through Ancient dialogue until `in_dialogue` is false. |
 
 ### Rest Site (`rest_site`)

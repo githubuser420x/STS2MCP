@@ -4,6 +4,7 @@ using System.Linq;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Models.Events;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -154,6 +155,11 @@ public static partial class McpMod
                 result["state_type"] = "map";
                 result["map"] = BuildMultiplayerMapState(runState);
             }
+            else if (eventRoom.CanonicalEvent is FakeMerchant)
+            {
+                result["state_type"] = "fake_merchant";
+                result["fake_merchant"] = BuildFakeMerchantState(eventRoom, runState);
+            }
             else
             {
                 result["state_type"] = "event";
@@ -227,6 +233,13 @@ public static partial class McpMod
         // All players summary (always included for multiplayer)
         result["players"] = BuildAllPlayersState(runState);
 
+        // Always include full local player data (relics, potions, deck, etc.) on every screen,
+        // matching singleplayer behavior from BuildGameState()
+        if (localPlayer != null)
+        {
+            result["player"] = BuildPlayerState(localPlayer);
+        }
+
         return result;
     }
 
@@ -245,27 +258,6 @@ public static partial class McpMod
         battle["turn"] = combatState.CurrentSide.ToString().ToLower();
         battle["is_play_phase"] = CombatManager.Instance.IsPlayPhase;
         battle["all_players_ready"] = CombatManager.Instance.AllPlayersReadyToEndTurn();
-
-        // All players in combat - full state for local player, summary for others
-        var players = new List<Dictionary<string, object?>>();
-        Dictionary<string, object?>? localPlayerState = null;
-        foreach (var player in runState.Players)
-        {
-            bool isLocal = LocalContext.IsMe(player);
-            // Full hand/piles/orbs only for local player; others get summary only
-            var playerState = isLocal ? BuildPlayerState(player) : BuildPlayerStateSummary(player);
-            playerState["is_local"] = isLocal;
-            playerState["is_alive"] = player.Creature.IsAlive;
-            playerState["is_ready_to_end_turn"] = CombatManager.Instance.IsPlayerReadyToEndTurn(player);
-            players.Add(playerState);
-            if (isLocal)
-                localPlayerState = playerState;
-        }
-        battle["players"] = players;
-
-        // Local player shortcut (same dict as the is_local=true entry in players)
-        if (localPlayerState != null)
-            battle["player"] = localPlayerState;
 
         // Enemies
         var enemies = new List<Dictionary<string, object?>>();
@@ -405,73 +397,13 @@ public static partial class McpMod
         return state;
     }
 
-    /// <summary>
-    /// Builds player combat state without private info (hand, draw/discard/exhaust piles, orbs).
-    /// Used for non-local players in multiplayer - shows HP, block, energy, powers, relics, potions.
-    /// </summary>
-    private static Dictionary<string, object?> BuildPlayerStateSummary(Player player)
-    {
-        var state = new Dictionary<string, object?>();
-        var creature = player.Creature;
-        var combatState = player.PlayerCombatState;
-
-        state["character"] = SafeGetText(() => player.Character.Title);
-        state["hp"] = creature.CurrentHp;
-        state["max_hp"] = creature.MaxHp;
-        state["block"] = creature.Block;
-
-        if (combatState != null && CombatManager.Instance.IsInProgress)
-        {
-            state["energy"] = combatState.Energy;
-            state["max_energy"] = combatState.MaxEnergy;
-
-            if (player.Character.ShouldAlwaysShowStarCounter || combatState.Stars > 0)
-                state["stars"] = combatState.Stars;
-        }
-
-        state["gold"] = player.Gold;
-        state["status"] = BuildPowersState(creature);
-
-        var relics = new List<Dictionary<string, object?>>();
-        foreach (var relic in player.Relics)
-        {
-            relics.Add(new Dictionary<string, object?>
-            {
-                ["id"] = relic.Id.Entry,
-                ["name"] = SafeGetText(() => relic.Title),
-                ["description"] = SafeGetText(() => relic.DynamicDescription),
-                ["counter"] = relic.ShowCounter ? relic.DisplayAmount : null,
-                ["keywords"] = BuildHoverTips(relic.HoverTipsExcludingRelic)
-            });
-        }
-        state["relics"] = relics;
-
-        var potions = new List<Dictionary<string, object?>>();
-        int slotIndex = 0;
-        foreach (var potion in player.PotionSlots)
-        {
-            if (potion != null)
-            {
-                potions.Add(new Dictionary<string, object?>
-                {
-                    ["id"] = potion.Id.Entry,
-                    ["name"] = SafeGetText(() => potion.Title),
-                    ["slot"] = slotIndex
-                });
-            }
-            slotIndex++;
-        }
-        state["potions"] = potions;
-
-        return state;
-    }
-
     private static List<Dictionary<string, object?>> BuildAllPlayersState(RunState runState)
     {
+        bool inCombat = CombatManager.Instance.IsInProgress;
         var players = new List<Dictionary<string, object?>>();
         foreach (var player in runState.Players)
         {
-            players.Add(new Dictionary<string, object?>
+            var entry = new Dictionary<string, object?>
             {
                 ["character"] = SafeGetText(() => player.Character.Title),
                 ["is_local"] = LocalContext.IsMe(player),
@@ -479,7 +411,23 @@ public static partial class McpMod
                 ["max_hp"] = player.Creature.MaxHp,
                 ["gold"] = player.Gold,
                 ["is_alive"] = player.Creature.IsAlive
-            });
+            };
+            if (inCombat)
+            {
+                entry["block"] = player.Creature.Block;
+                entry["is_ready_to_end_turn"] = CombatManager.Instance.IsPlayerReadyToEndTurn(player);
+
+                // Include pets for teammates (local player's pets are under "player")
+                if (!LocalContext.IsMe(player))
+                {
+                    var pets = BuildPetsState(player);
+                    if (pets.Count > 0)
+                    {
+                        entry["pets"] = pets;
+                    }
+                }
+            }
+            players.Add(entry);
         }
         return players;
     }

@@ -57,12 +57,23 @@ Always present at the top level (except `menu`). Contains everything about the l
   "draw_pile_count": 15,
   "discard_pile_count": 3,
   "exhaust_pile_count": 1,
-  "draw_pile": [ /* Pile Card Objects (shuffled to hide draw order) */ ],
+  "draw_pile": [ /* Pile Card Objects (sorted by rarity, matching in-game display) */ ],
   "discard_pile": [ /* Pile Card Objects */ ],
   "exhaust_pile": [ /* Pile Card Objects */ ],
   "orbs": [ /* Orb Objects */ ],   // Defect only; omitted if orb capacity is 0
   "orb_slots": 3,
   "orb_empty_slots": 1,
+  "pets": [                        // Necrobinder only; omitted if no pets
+    {
+      "id": "OSTY",
+      "name": "Otsy",
+      "alive": true,
+      "hp": 12,
+      "max_hp": 12,
+      "block": 0,
+      "status": [ /* Power Objects */ ]
+    }
+  ],
 
   // --- Always present ---
   "status": [ /* Power Objects */ ],
@@ -419,15 +430,16 @@ Shop inventory is auto-opened when state is queried.
       {
         "index": 0,
         "category": "card",
-        "cost": 75,
+        "price": 75,               // Gold price in the shop
         "is_stocked": true,
         "can_afford": true,
         "on_sale": false,
         "card_id": "OFFERING",
         "card_name": "Offering",
         "card_type": "Skill",
+        "card_cost": "1",          // Energy cost as string ("X" for X-cost)
+        "card_star_cost": null,    // Regent star cost as string, null if N/A
         "card_rarity": "Rare",
-        "card_star_cost": null,  // Regent star cost as string, null if N/A
         "card_description": "Lose 6 HP. Gain 2 Energy. Draw 3 cards.",
         "keywords": [ /* Keyword Objects */ ]
       },
@@ -435,7 +447,7 @@ Shop inventory is auto-opened when state is queried.
       {
         "index": 5,
         "category": "relic",
-        "cost": 150,
+        "price": 150,
         "is_stocked": true,
         "can_afford": false,
         "relic_id": "VAJRA",
@@ -447,7 +459,7 @@ Shop inventory is auto-opened when state is queried.
       {
         "index": 8,
         "category": "potion",
-        "cost": 50,
+        "price": 50,
         "is_stocked": true,
         "can_afford": true,
         "potion_id": "FIRE_POTION",
@@ -459,7 +471,7 @@ Shop inventory is auto-opened when state is queried.
       {
         "index": 10,
         "category": "card_removal",
-        "cost": 75,
+        "price": 75,
         "is_stocked": true,
         "can_afford": true
       }
@@ -471,6 +483,45 @@ Shop inventory is auto-opened when state is queried.
   "player": { ... }
 }
 ```
+
+### `fake_merchant` — Fake Merchant Event
+
+A relic-only shop disguised as an event. Uses `shop_purchase` and `proceed` actions (same as regular shop). If the player triggers a fight, the merchant disappears.
+
+```jsonc
+{
+  "state_type": "fake_merchant",
+  "fake_merchant": {
+    "event_id": "FAKE_MERCHANT",
+    "event_name": "Fake Merchant",
+    "started_fight": false,         // true after triggering the foul potion fight
+    "shop": {
+      "items": [
+        {
+          "index": 0,
+          "category": "relic",
+          "cost": 150,
+          "is_stocked": true,
+          "can_afford": true,
+          "relic_id": "VAJRA",
+          "relic_name": "Vajra",
+          "relic_description": "At the start of each combat, gain 1 Strength.",
+          "keywords": [ /* Keyword Objects */ ]
+        }
+      ],
+      "can_proceed": true
+    },
+    // After fight:
+    // "started_fight": true,
+    // "shop": { "items": [], "can_proceed": true },
+    // "message": "The fake merchant has been defeated. Proceed to map."
+  },
+  "run": { ... },
+  "player": { ... }
+}
+```
+
+**Note:** The fake merchant only sells relics — no cards, potions, or card removal. The `shop_purchase` action works the same as for a regular shop.
 
 ### `treasure` — Treasure Room
 
@@ -590,6 +641,7 @@ Boss relic selection. Pick is immediate.
         "id": "BLACK_STAR",
         "name": "Black Star",
         "description": "Elites drop an additional relic.",
+        "rarity": "Rare",
         "keywords": [ /* Keyword Objects */ ]
       }
     ],
@@ -813,7 +865,7 @@ Choose an event option.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `index` | int | Yes | 0-based index among unlocked options |
+| `index` | int | Yes | 0-based index matching the option's `index` from state (locked options return an error) |
 
 Works for both regular events and Ancients (after dialogue ends).
 
@@ -837,7 +889,7 @@ Choose a rest site option (rest, smith, etc.).
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `index` | int | Yes | 0-based index among enabled options |
+| `index` | int | Yes | 0-based index matching the option's `index` from state (disabled options return an error) |
 
 ### `shop_purchase`
 
@@ -1026,16 +1078,38 @@ Finish the Crystal Sphere minigame.
 ```jsonc
 {
   "battle": {
-    "all_players_ready": false,
-    "players": [
-      {
-        "is_local": true,
-        "is_alive": true,
-        "is_ready_to_end_turn": false,
-        // Full player state for local player; summary for others
-      }
-    ]
-  }
+    "all_players_ready": false
+    // Same shape as singleplayer (round, turn, is_play_phase, enemies).
+    // Player state lives in top-level "player" (local) and "players" (all).
+  },
+  "players": [
+    {
+      "character": "The Ironclad",
+      "hp": 72, "max_hp": 80,
+      "gold": 99,
+      "is_alive": true,
+      "is_local": true,
+      "is_ready_to_end_turn": false   // Only present during combat
+    },
+    {
+      "character": "The Necrobinder",
+      "hp": 60, "max_hp": 66,
+      "gold": 80,
+      "is_alive": true,
+      "is_local": false,
+      "is_ready_to_end_turn": false,
+      "pets": [                       // Omitted for local player (pets are under top-level "player")
+        {
+          "id": "OSTY",
+          "name": "Otsy",
+          "alive": true,
+          "hp": 12, "max_hp": 12,
+          "block": 0,
+          "status": [ /* Power Objects */ ]
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -1068,7 +1142,7 @@ Finish the Crystal Sphere minigame.
         "player": "The Ironclad",
         "is_local": true,
         "voted": true,
-        "vote_option_index": 0
+        "vote_option": 0
       }
     ],
     "all_voted": false
