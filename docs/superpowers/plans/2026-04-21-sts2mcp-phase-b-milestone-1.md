@@ -12,6 +12,17 @@
 
 **Reference codebase for Agent SDK pattern:** `C:\Users\user\Desktop\war room\warroom-shadowheart\agent_sdk_llm.py` — proven persistent `ClaudeSDKClient` implementation.
 
+## Speed design (why this milestone matters)
+
+Baseline: interactive Claude Code on Sonnet `effort=high` made every turn slow, even trivial ones. The bottleneck is LLM invocation count and per-invocation thinking time. This milestone attacks both:
+
+- **Fewer invocations per turn:** `play_turn` batches N combat actions into one LLM call; PR #34 fuses POST-action with `get_game_state` so individual card plays are also single round-trips.
+- **Warm per-invocation context:** Agent SDK loop uses a single persistent `ClaudeSDKClient` per batch — prompt cache stays warm across turns. Interactive Claude Code re-initializes per session; the SDK does not.
+- **Right-sized thinking budget:** runner defaults to `effort=low`, passed through to the SDK. High effort was the dominant latency cost on our diagnostic run; low is the new default.
+- **Concise system prompt:** `agent_loop/strategy_prompt.md` tells Claude "don't narrate, act" so output tokens stay small and TTFT stays low.
+
+These are the four levers. Every code change below traces back to one of them.
+
 ---
 
 ## Group 0 — Prerequisites
@@ -346,113 +357,154 @@ git add mcp/tests mcp/pyproject.toml mcp/uv.lock
 git commit -m "test(mcp): add pytest + respx harness for MCP tool tests"
 ```
 
-### Task B.3: Wire `start_run` MCP tool (TDD)
+### Task B.3: Wire autonomy + reference MCP tools (batched)
 
 **Files:**
 - Modify: `mcp/server.py`
 - Modify: `mcp/tests/test_autonomy_tools.py`
 
-**Design note:** `start_run` is a high-level composition: navigate menu → character select → embark. Internally it calls the raw `menu_select` HTTP endpoint. We'll add `menu_select` as a primitive first, then `start_run` as a convenience wrapper.
+**Design note:** All of these except `start_run` are thin pass-throughs that follow upstream `server.py`'s existing `@mcp.tool()` convention — keep the same shape (one decorated async function, ~8-12 lines, focused docstring). `start_run` is a composite. Glossary/bestiary tools read a different path, so they use a new `_get_path` helper.
 
-- [ ] **Step 1: Write failing test for `menu_select`**
+**Before writing any code: cross-reference action strings against `McpMod.Actions.cs`** (post-romgenie-merge). Grep it:
 
-Append to `test_autonomy_tools.py`:
+```bash
+grep -n 'case "' McpMod.Actions.cs | head -30
+```
+
+If any of the action strings below (`menu_select`, `character_select`, `embark`, `game_over_continue`, `game_over_return_to_menu`, `timeline_advance`, `dismiss_ftue`, `profile_switch`) don't appear verbatim in the switch, rename to match what the mod actually accepts and note the mapping in the commit message.
+
+- [ ] **Step 1: Write the batched failing test**
+
+Replace the placeholder in `mcp/tests/test_autonomy_tools.py` with:
 
 ```python
+"""Autonomy + reference tools. Thin MCP wrappers over the romgenie mod endpoints.
+
+Each test mocks httpx at the respx layer, calls the MCP tool, and verifies the
+correct action string or path was sent.
+"""
+import json as _json
+import pytest
+import respx
+
 import server
 
 
+# --- action-posting tools (all POST /api/v1/singleplayer) ------------------
+
+ACTION_CASES = [
+    # (callable, expected_action_value, extra_param_keys_present)
+    (lambda: server.menu_select(option="singleplayer"), "menu_select", {"option"}),
+    (lambda: server.game_over_continue(), "game_over_continue", set()),
+    (lambda: server.game_over_return_to_menu(), "game_over_return_to_menu", set()),
+    (lambda: server.timeline_advance(), "timeline_advance", set()),
+    (lambda: server.dismiss_ftue(), "dismiss_ftue", set()),
+    (lambda: server.profile_switch(index=0), "profile_switch", {"index"}),
+]
+
+
 @pytest.mark.asyncio
-async def test_menu_select_posts_action(mock_mod):
-    mock_mod.post("/api/v1/singleplayer").respond(
-        json={"status": "ok", "message": "menu navigated"}
+@pytest.mark.parametrize("call, action, params", ACTION_CASES)
+async def test_action_wrapper_posts_right_action(mock_mod, call, action, params):
+    mock_mod.post("/api/v1/singleplayer").respond(json={"status": "ok"})
+    await call()
+    body = _json.loads(mock_mod.calls.last.request.content)
+    assert body["action"] == action
+    for p in params:
+        assert p in body
+
+
+# --- start_run composite ---------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_start_run_sequence(mock_mod):
+    """start_run drives: menu_select singleplayer → character_select → embark."""
+    calls = []
+
+    def capture(request):
+        calls.append(_json.loads(request.content))
+        return respx.MockResponse(json={"status": "ok"})
+
+    mock_mod.post("/api/v1/singleplayer").mock(side_effect=capture)
+    mock_mod.get("/api/v1/singleplayer").respond(
+        json={"state_type": "monster", "run": {"act": 1, "floor": 1, "ascension": 0}}
     )
-    result = await server.menu_select(option="singleplayer")
+    await server.start_run(character="ironclad", seed=12345, ascension=0)
+
+    actions = [c.get("action") for c in calls]
+    assert "menu_select" in actions
+    assert any(c.get("action") == "character_select" and c.get("character") == "ironclad" for c in calls)
+    assert any(c.get("action") == "embark" and c.get("seed") == 12345 for c in calls)
+
+
+# --- reference-reading tools (GET /api/v1/glossary/* or /api/v1/bestiary) --
+
+REFERENCE_CASES = [
+    (lambda: server.get_glossary_cards(), "/api/v1/glossary/cards"),
+    (lambda: server.get_glossary_relics(), "/api/v1/glossary/relics"),
+    (lambda: server.get_glossary_potions(), "/api/v1/glossary/potions"),
+    (lambda: server.get_glossary_keywords(), "/api/v1/glossary/keywords"),
+    (lambda: server.get_bestiary(), "/api/v1/bestiary"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call, path", REFERENCE_CASES)
+async def test_reference_wrapper_hits_right_path(mock_mod, call, path):
+    mock_mod.get(path).respond(json={"ok": True})
+    result = await call()
     assert "ok" in result
-    request = mock_mod.calls.last.request
-    body = request.content.decode()
-    assert '"action": "menu_select"' in body
-    assert '"option": "singleplayer"' in body
 ```
 
-- [ ] **Step 2: Run, verify it fails with AttributeError**
+- [ ] **Step 2: Run, verify all fail**
 
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py::test_menu_select_posts_action -v`
-Expected: FAIL with `AttributeError: module 'server' has no attribute 'menu_select'`.
+Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py -v`
+Expected: FAILs with `AttributeError: module 'server' has no attribute 'menu_select'` (and similar for others).
 
-- [ ] **Step 3: Implement `menu_select` in `server.py`**
+- [ ] **Step 3: Add the `_get_path` helper**
 
-Append after the existing general-section tools (after `proceed_to_map`, around line 150):
+Insert near the existing `_get`/`_post` helpers in `mcp/server.py`:
+
+```python
+async def _get_path(path: str) -> str:
+    """GET an arbitrary path on the mod server (for non-action endpoints)."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"{_base_url}{path}", timeout=10.0)
+        r.raise_for_status()
+        return r.text
+```
+
+- [ ] **Step 4: Append the autonomy wrappers to `server.py`**
+
+After the existing general-section tools:
 
 ```python
 @mcp.tool()
 async def menu_select(option: str) -> str:
     """[Menu] Select a main-menu option by string id.
 
-    Valid options depend on menu state. Typical values: "singleplayer",
-    "multiplayer", "profile", "settings", "quit".
-
-    Args:
-        option: the menu option id.
+    Typical values: "singleplayer", "multiplayer", "profile", "settings", "quit".
     """
     try:
         return await _post({"action": "menu_select", "option": option})
     except Exception as e:
         return _handle_error(e)
-```
 
-- [ ] **Step 4: Run, verify pass**
 
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py::test_menu_select_posts_action -v`
-Expected: PASS.
-
-- [ ] **Step 5: Write failing test for `start_run`**
-
-```python
-@pytest.mark.asyncio
-async def test_start_run_sequence(mock_mod):
-    """start_run should: select singleplayer, pick character, optionally set seed, embark."""
-    calls = []
-    def capture(request):
-        import json as _json
-        calls.append(_json.loads(request.content))
-        return respx.MockResponse(json={"status": "ok"})
-    mock_mod.post("/api/v1/singleplayer").mock(side_effect=capture)
-    # Also stub the final get_game_state call to return in-run state
-    mock_mod.get("/api/v1/singleplayer").respond(
-        json={"state_type": "monster", "run": {"act": 1, "floor": 1, "ascension": 0}}
-    )
-    result = await server.start_run(character="ironclad", seed=12345)
-    # Must send: menu_select singleplayer -> character_select ironclad -> embark seed=12345
-    actions = [c["action"] for c in calls]
-    assert "menu_select" in actions
-    assert any(c.get("action") == "character_select" and c.get("character") == "ironclad" for c in calls)
-    assert any(c.get("action") == "embark" and c.get("seed") == 12345 for c in calls)
-```
-
-- [ ] **Step 6: Run, verify fail**
-
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py::test_start_run_sequence -v`
-Expected: FAIL with `AttributeError: module 'server' has no attribute 'start_run'`.
-
-- [ ] **Step 7: Implement `start_run`**
-
-```python
 @mcp.tool()
 async def start_run(
     character: str,
     seed: int | None = None,
     ascension: int = 0,
 ) -> str:
-    """[Menu] Start a new singleplayer run programmatically.
-
-    Drives: main menu -> singleplayer -> character select -> embark.
-    Dismisses FTUE/tutorial prompts that appear along the way.
+    """[Menu] Start a new singleplayer run: main menu → character select → embark.
 
     Args:
         character: character id (e.g. "ironclad", "necrobinder").
         seed: optional integer seed for reproducible runs.
         ascension: ascension level (default 0).
+
+    Returns the game state after embark.
     """
     try:
         await _post({"action": "menu_select", "option": "singleplayer"})
@@ -464,61 +516,8 @@ async def start_run(
         return await _get({"format": "markdown"})
     except Exception as e:
         return _handle_error(e)
-```
-
-- [ ] **Step 8: Run, verify pass**
-
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py -v`
-Expected: all pass.
-
-- [ ] **Step 9: Verify against live game (manual)**
-
-Restart Claude Code in a fresh terminal (MCP reload), from the main menu of STS2 ask Claude: *"Call start_run with character='ironclad', seed=12345."* Expected: game actually embarks.
-
-If the action names (`menu_select`, `character_select`, `embark`) differ from what the romgenie C# backend accepts, adjust the Python payloads to match. Inspect `McpMod.Actions.cs` (post-merge) for the real action string keys.
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add mcp/server.py mcp/tests/test_autonomy_tools.py
-git commit -m "feat(mcp): add menu_select and start_run MCP tools"
-```
-
-### Task B.4: Wire `game_over_*` and `timeline_advance` tools
-
-**Files:**
-- Modify: `mcp/server.py`
-- Modify: `mcp/tests/test_autonomy_tools.py`
-
-- [ ] **Step 1: Write failing tests**
-
-```python
-@pytest.mark.asyncio
-async def test_game_over_return_to_menu(mock_mod):
-    mock_mod.post("/api/v1/singleplayer").respond(json={"status": "ok"})
-    result = await server.game_over_return_to_menu()
-    body = mock_mod.calls.last.request.content.decode()
-    assert '"action": "game_over_return_to_menu"' in body
 
 
-@pytest.mark.asyncio
-async def test_timeline_advance(mock_mod):
-    mock_mod.post("/api/v1/singleplayer").respond(json={"status": "ok"})
-    await server.timeline_advance()
-    body = mock_mod.calls.last.request.content.decode()
-    assert '"action": "timeline_advance"' in body
-```
-
-- [ ] **Step 2: Run, verify fail**
-
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py::test_game_over_return_to_menu tests/test_autonomy_tools.py::test_timeline_advance -v`
-Expected: both FAIL with `AttributeError`.
-
-- [ ] **Step 3: Implement**
-
-Append to `server.py`:
-
-```python
 @mcp.tool()
 async def game_over_continue() -> str:
     """[Game Over] Continue past the game-over screen (where the game allows)."""
@@ -553,71 +552,23 @@ async def dismiss_ftue() -> str:
         return await _post({"action": "dismiss_ftue"})
     except Exception as e:
         return _handle_error(e)
+
+
+@mcp.tool()
+async def profile_switch(index: int) -> str:
+    """[Profile] Switch the active save profile by index (0-based)."""
+    try:
+        return await _post({"action": "profile_switch", "index": index})
+    except Exception as e:
+        return _handle_error(e)
 ```
 
-- [ ] **Step 4: Run, verify pass**
-
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py -v`
-
-- [ ] **Step 5: Verify action-name mapping against `McpMod.Actions.cs`**
-
-Grep the C# file for the actual registered action strings:
-
-Run: `grep -n 'case "' McpMod.Actions.cs | head -30`
-
-Compare the `action` strings we send above against what the switch/case accepts. Rename any that don't match.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add mcp/server.py mcp/tests/test_autonomy_tools.py
-git commit -m "feat(mcp): add game_over, timeline_advance, dismiss_ftue tools"
-```
-
-### Task B.5: Glossary and bestiary read-only tools
-
-**Files:**
-- Modify: `mcp/server.py`
-- Modify: `mcp/tests/test_autonomy_tools.py`
-
-- [ ] **Step 1: Write failing test**
-
-```python
-@pytest.mark.asyncio
-async def test_get_glossary_cards(mock_mod):
-    mock_mod.get("/api/v1/glossary/cards").respond(
-        json={"cards": [{"id": "STRIKE", "name": "Strike"}]}
-    )
-    result = await server.get_glossary_cards()
-    assert "STRIKE" in result
-```
-
-- [ ] **Step 2: Run, verify fail**
-
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py::test_get_glossary_cards -v`
-Expected: FAIL.
-
-- [ ] **Step 3: Implement four glossary tools + bestiary**
-
-Append to `server.py`. These hit a different base path than the `/api/v1/singleplayer` endpoint — use raw `httpx` since `_get` as currently written targets the action endpoint.
-
-Add helper near the other `_get`/`_post` helpers:
-
-```python
-async def _get_path(path: str) -> str:
-    """GET an arbitrary path on the mod server."""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{_base_url}{path}", timeout=10.0)
-        r.raise_for_status()
-        return r.text
-```
-
-Then the tools:
+- [ ] **Step 5: Append the reference-reading wrappers**
 
 ```python
 @mcp.tool()
 async def get_glossary_cards() -> str:
-    """[Reference] Static card glossary: id, name, rarity, cost, description. Cache-friendly."""
+    """[Reference] Static card glossary (id, name, rarity, cost, description). Cache once per session."""
     try:
         return await _get_path("/api/v1/glossary/cards")
     except Exception as e:
@@ -660,23 +611,27 @@ async def get_bestiary() -> str:
         return _handle_error(e)
 ```
 
-- [ ] **Step 4: Run, verify pass**
+- [ ] **Step 6: Run the test suite, verify all pass**
 
-Run: `cd mcp && uv run pytest tests/test_autonomy_tools.py -v`
-Expected: all pass.
+Run: `cd mcp && uv run pytest tests/ -v`
+Expected: every parametrized case and `test_start_run_sequence` green.
 
-- [ ] **Step 5: Live smoke-test one glossary tool**
+- [ ] **Step 7: Live smoke-test (manual)**
 
-With game running, in a fresh Claude Code session, ask: *"Call get_glossary_cards and show me the first three cards."* Expected: returns real card data.
+With STS2 running, fresh Claude Code session, ask: *"Call get_glossary_cards and show me three cards. Then from the main menu call start_run with character='ironclad' and seed=12345."*
 
-- [ ] **Step 6: Commit**
+Expected: glossary returns real card data; game actually embarks.
+
+If any wrapper returns an error string from the mod, inspect the mod's stderr (STS2 console output) to find the real action name the mod rejected, fix in `server.py`, re-test.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add mcp/server.py mcp/tests/test_autonomy_tools.py
-git commit -m "feat(mcp): add glossary and bestiary read tools"
+git commit -m "feat(mcp): add autonomy and reference tools wrapping romgenie endpoints"
 ```
 
-### Task B.6: `play_turn` batch tool
+### Task B.4: `play_turn` batch tool
 
 **Files:**
 - Modify: `mcp/server.py`
