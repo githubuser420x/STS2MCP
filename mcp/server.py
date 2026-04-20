@@ -6,6 +6,7 @@ as MCP tools for Claude Desktop / Claude Code.
 
 import argparse
 import json
+import os
 import sys
 
 import httpx
@@ -15,6 +16,9 @@ mcp = FastMCP("sts2")
 
 _base_url: str = "http://localhost:15526"
 _trust_env: bool = True
+DEFAULT_HOST = os.environ.get("STS2_HOST", "localhost")
+DEFAULT_PORT = int(os.environ.get("STS2_PORT", "15526"))
+_base_url: str = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
 
 def _sp_url() -> str:
@@ -890,8 +894,8 @@ async def mp_crystal_sphere_proceed() -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="STS2 MCP Server")
-    parser.add_argument("--port", type=int, default=15526, help="Game HTTP server port")
-    parser.add_argument("--host", type=str, default="localhost", help="Game HTTP server host")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Game HTTP server port")
+    parser.add_argument("--host", type=str, default=DEFAULT_HOST, help="Game HTTP server host")
     parser.add_argument("--no-trust-env", action="store_true", help="Ignore HTTP_PROXY/HTTPS_PROXY environment variables")
     args = parser.parse_args()
 

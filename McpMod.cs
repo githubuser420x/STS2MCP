@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -13,6 +15,8 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
 
 namespace STS2_MCP;
 
@@ -25,6 +29,7 @@ public static partial class McpMod
 
     private static HttpListener? _listener;
     private static Thread? _serverThread;
+    private static string[] _boundPrefixes = Array.Empty<string>();
     private static readonly ConcurrentQueue<Action> _mainThreadQueue = new();
     internal static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -84,11 +89,7 @@ public static partial class McpMod
             tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ProcessMainThreadQueue));
 
             int port = LoadPort();
-
-            _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://localhost:{port}/");
-            _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            _listener.Start();
+            StartHttpServer(port);
 
             _serverThread = new Thread(ServerLoop)
             {
@@ -97,7 +98,7 @@ public static partial class McpMod
             };
             _serverThread.Start();
 
-            GD.Print($"[STS2 MCP] v{Version} server started on http://localhost:{port}/");
+            GD.Print($"[STS2 MCP] v{Version} server started on {string.Join(", ", _boundPrefixes)}");
         }
         catch (Exception ex)
         {
@@ -116,6 +117,85 @@ public static partial class McpMod
             GD.PrintErr(
                 $"[STS2 MCP] Harmony patches unavailable; continuing without optional UI injection: {ex}");
         }
+    }
+
+    private static void StartHttpServer(int port)
+    {
+        var attempts = new List<string[]>
+        {
+            new[] { $"http://+:{port}/" }
+        };
+
+        var ipv4Prefixes = GetIpv4Prefixes(port);
+        if (ipv4Prefixes.Count > 0)
+            attempts.Add(ipv4Prefixes.ToArray());
+
+        attempts.Add(new[]
+        {
+            $"http://localhost:{port}/",
+            $"http://127.0.0.1:{port}/"
+        });
+
+        Exception? lastError = null;
+
+        foreach (var prefixes in attempts)
+        {
+            HttpListener? candidate = null;
+            try
+            {
+                candidate = new HttpListener();
+                foreach (var prefix in prefixes)
+                    candidate.Prefixes.Add(prefix);
+                candidate.Start();
+
+                _listener = candidate;
+                _boundPrefixes = prefixes;
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                try { candidate?.Close(); } catch { }
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not bind STS2 MCP on port {port}. Tried wildcard, explicit IPv4, and loopback prefixes.",
+            lastError);
+    }
+
+    private static List<string> GetIpv4Prefixes(int port)
+    {
+        var prefixes = new List<string>();
+
+        try
+        {
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                foreach (var addressInfo in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (addressInfo.Address.AddressFamily != AddressFamily.InterNetwork)
+                        continue;
+
+                    var address = addressInfo.Address.ToString();
+                    if (address == "127.0.0.1" || address.StartsWith("169.254.", StringComparison.Ordinal))
+                        continue;
+
+                    var prefix = $"http://{address}:{port}/";
+                    if (!prefixes.Contains(prefix))
+                        prefixes.Add(prefix);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[STS2 MCP] Failed to enumerate IPv4 listeners: {ex.Message}");
+        }
+
+        return prefixes;
     }
 
     private static void ProcessMainThreadQueue()
@@ -187,7 +267,7 @@ public static partial class McpMod
 
             if (path == "/")
             {
-                SendJson(response, new { message = $"Hello from STS2 MCP v{Version}", status = "ok" });
+                SendJson(response, new { message = $"Hello from STS2 MCP v{Version}", status = "ok", bound_prefixes = _boundPrefixes });
             }
             else if (path == "/api/v1/singleplayer")
             {
@@ -221,6 +301,127 @@ public static partial class McpMod
                     HandleGetMultiplayerState(request, response);
                 else if (request.HttpMethod == "POST")
                     HandlePostMultiplayerAction(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/settings")
+            {
+                if (request.HttpMethod == "GET")
+                {
+                    try
+                    {
+                        var dataTask = RunOnMainThread(() =>
+                        {
+                            var sm = SaveManager.Instance;
+                            var settings = sm.SettingsSave;
+                            var prefs = sm.PrefsSave;
+
+                            return new Dictionary<string, object?>
+                            {
+                                ["display"] = new Dictionary<string, object?>
+                                {
+                                    ["fullscreen"] = settings.Fullscreen,
+                                    ["resolution"] = $"{settings.WindowSize.X}x{settings.WindowSize.Y}",
+                                    ["fps_limit"] = settings.FpsLimit,
+                                    ["vsync"] = settings.VSync.ToString(),
+                                    ["msaa"] = settings.Msaa,
+                                    ["aspect_ratio"] = settings.AspectRatioSetting.ToString(),
+                                    ["target_display"] = settings.TargetDisplay,
+                                    ["limit_fps_background"] = settings.LimitFpsInBackground,
+                                },
+                                ["audio"] = new Dictionary<string, object?>
+                                {
+                                    ["master"] = settings.VolumeMaster,
+                                    ["bgm"] = settings.VolumeBgm,
+                                    ["sfx"] = settings.VolumeSfx,
+                                    ["ambience"] = settings.VolumeAmbience,
+                                },
+                                ["gameplay"] = new Dictionary<string, object?>
+                                {
+                                    ["fast_mode"] = prefs.FastMode.ToString(),
+                                    ["screen_shake"] = prefs.ScreenShakeOptionIndex,
+                                    ["show_run_timer"] = prefs.ShowRunTimer,
+                                    ["show_card_indices"] = prefs.ShowCardIndices,
+                                    ["text_effects"] = prefs.TextEffectsEnabled,
+                                    ["long_press"] = prefs.IsLongPressEnabled,
+                                },
+                                ["mods"] = new Dictionary<string, object?>
+                                {
+                                    ["enabled"] = settings.ModSettings?.PlayerAgreedToModLoading ?? false,
+                                },
+                                ["language"] = settings.Language,
+                                ["skip_intro"] = settings.SkipIntroLogo,
+                            };
+                        });
+                        SendJson(response, dataTask.GetAwaiter().GetResult());
+                    }
+                    catch (System.Exception ex)
+                    {
+                        SendError(response, 500, $"Failed to read settings: {ex.Message}");
+                    }
+                }
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/profiles")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetProfiles(response);
+                else if (request.HttpMethod == "POST")
+                    HandlePostProfiles(request, response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/profile")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetProfile(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/bestiary")
+            {
+                if (request.HttpMethod == "GET")
+                {
+                    try
+                    {
+                        var dataTask = RunOnMainThread(() => BuildBestiary());
+                        var data = dataTask.GetAwaiter().GetResult();
+                        SendJson(response, data);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        SendError(response, 500, $"Failed to build bestiary: {ex.Message}");
+                    }
+                }
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/glossary/cards")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryCards(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/glossary/relics")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryRelics(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/glossary/potions")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryPotions(response);
+                else
+                    SendError(response, 405, "Method not allowed");
+            }
+            else if (path == "/api/v1/glossary/keywords")
+            {
+                if (request.HttpMethod == "GET")
+                    HandleGetGlossaryKeywords(response);
                 else
                     SendError(response, 405, "Method not allowed");
             }
@@ -368,6 +569,245 @@ public static partial class McpMod
         }
     }
 
+    private static void HandleGetProfiles(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() =>
+            {
+                var sm = SaveManager.Instance;
+                var result = new Dictionary<string, object?>
+                {
+                    ["current_profile_id"] = sm.CurrentProfileId,
+                    ["profiles"] = new List<Dictionary<string, object?>>()
+                };
+
+                // Check which profiles exist by looking for save directories
+                var profiles = (List<Dictionary<string, object?>>)result["profiles"]!;
+                for (int i = 1; i <= 3; i++)
+                {
+                    var profileData = new Dictionary<string, object?>
+                    {
+                        ["id"] = i,
+                        ["is_current"] = i == sm.CurrentProfileId,
+                    };
+
+                    // Check if profile has progress data
+                    try
+                    {
+                        var path = MegaCrit.Sts2.Core.Saves.Managers.ProgressSaveManager.GetProgressPathForProfile(i);
+                        profileData["has_data"] = System.IO.File.Exists(path);
+                        profileData["path"] = path;
+                    }
+                    catch
+                    {
+                        profileData["has_data"] = false;
+                    }
+
+                    profiles.Add(profileData);
+                }
+
+                return result;
+            });
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to get profiles: {ex.Message}");
+        }
+    }
+
+    private static void HandlePostProfiles(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        string body;
+        using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            body = reader.ReadToEnd();
+
+        Dictionary<string, JsonElement>? parsed;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
+        }
+        catch
+        {
+            SendError(response, 400, "Invalid JSON");
+            return;
+        }
+
+        if (parsed == null || !parsed.TryGetValue("action", out var actionElem))
+        {
+            SendError(response, 400, "Missing 'action' field. Use: switch, delete");
+            return;
+        }
+
+        string action = actionElem.GetString() ?? "";
+        int profileId = parsed.TryGetValue("profile_id", out var idElem) ? idElem.GetInt32() : 0;
+
+        try
+        {
+            var resultTask = RunOnMainThread(() =>
+            {
+                var sm = SaveManager.Instance;
+
+                if (action == "switch")
+                {
+                    if (profileId < 1 || profileId > 3)
+                        return new Dictionary<string, object?> { ["error"] = "profile_id must be 1-3" };
+                    if (RunManager.Instance.IsInProgress)
+                        return new Dictionary<string, object?> { ["error"] = "Cannot switch profiles during a run" };
+
+                    // Use the proper UI flow: find profile screen and click the button
+                    var tree = (Godot.Engine.GetMainLoop()) as Godot.SceneTree;
+                    if (tree?.Root != null)
+                    {
+                        var profileScreen = FindFirst<MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen.NProfileScreen>(tree.Root);
+                        if (profileScreen != null)
+                        {
+                            var buttons = profileScreen.GetType().GetField("_profileButtons",
+                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                ?.GetValue(profileScreen) as System.Collections.IList;
+                            if (buttons != null)
+                            {
+                                foreach (var btn in buttons)
+                                {
+                                    var btnId = btn.GetType().GetField("_profileId",
+                                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                                        ?.GetValue(btn);
+                                    if (btnId is int id && id == profileId)
+                                    {
+                                        var switchMethod = btn.GetType().GetMethod("SwitchToThisProfile",
+                                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                        switchMethod?.Invoke(btn, null);
+                                        return new Dictionary<string, object?>
+                                        {
+                                            ["status"] = "ok",
+                                            ["message"] = $"Switching to profile {profileId} (via UI)",
+                                            ["current_profile_id"] = profileId
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback: open profile screen first if not already open
+                        var mainMenu = FindFirst<MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu>(tree.Root);
+                        if (mainMenu != null)
+                        {
+                            mainMenu.OpenProfileScreen();
+                            return new Dictionary<string, object?>
+                            {
+                                ["status"] = "ok",
+                                ["message"] = "Opened profile screen. Send switch again to select profile.",
+                            };
+                        }
+                    }
+
+                    // Last resort: direct switch (requires restart)
+                    sm.SwitchProfileId(profileId);
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "ok",
+                        ["message"] = $"Switched to profile {profileId} (requires restart)",
+                        ["current_profile_id"] = sm.CurrentProfileId
+                    };
+                }
+                else if (action == "delete")
+                {
+                    if (profileId < 1 || profileId > 3)
+                        return new Dictionary<string, object?> { ["error"] = "profile_id must be 1-3" };
+                    if (profileId == sm.CurrentProfileId)
+                        return new Dictionary<string, object?> { ["error"] = "Cannot delete the active profile" };
+
+                    sm.DeleteProfile(profileId);
+                    return new Dictionary<string, object?>
+                    {
+                        ["status"] = "ok",
+                        ["message"] = $"Deleted profile {profileId}"
+                    };
+                }
+
+                return new Dictionary<string, object?> { ["error"] = $"Unknown action: {action}. Use: switch, delete" };
+            });
+            var result = resultTask.GetAwaiter().GetResult();
+            SendJson(response, result);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Profile action failed: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetProfile(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildProfile());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build profile: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryCards(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryCards());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryKeywords(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryKeywords());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryPotions(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryPotions());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
+    private static void HandleGetGlossaryRelics(HttpListenerResponse response)
+    {
+        try
+        {
+            var dataTask = RunOnMainThread(() => BuildGlossaryRelics());
+            var data = dataTask.GetAwaiter().GetResult();
+            SendJson(response, data);
+        }
+        catch (System.Exception ex)
+        {
+            SendError(response, 500, $"Failed to build glossary: {ex.Message}");
+        }
+    }
+
     private static void HandlePostAction(HttpListenerRequest request, HttpListenerResponse response)
     {
         string body;
@@ -392,6 +832,24 @@ public static partial class McpMod
         }
 
         string action = actionElem.GetString() ?? "";
+
+        // Handle menu actions separately (no run required)
+        if (action == "menu_select")
+        {
+            try
+            {
+                var option = parsed.TryGetValue("option", out var optElem) ? optElem.GetString() ?? "" : "";
+                var seed = parsed.TryGetValue("seed", out var seedElem) ? seedElem.GetString() : null;
+                var resultTask = RunOnMainThread(() => ExecuteMenuSelect(option, seed));
+                var result = resultTask.GetAwaiter().GetResult();
+                SendJson(response, result);
+            }
+            catch (Exception ex)
+            {
+                SendError(response, 500, $"Menu action failed: {ex.Message}");
+            }
+            return;
+        }
 
         try
         {
